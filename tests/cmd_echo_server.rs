@@ -2,8 +2,64 @@ use joy_bug::debugger_interface::{DebugEvent, ContinueDecision, LaunchedProcessI
 use joy_bug::debug_client::AsyncDebugClient;
 use joy_bug::debug_server;
 use joy_bug::logging;
+use joy_bug::arch::Architecture;
 use tracing::{info, error, warn, debug, trace};
 use std::time::Duration;
+
+async fn handle_breakpoint_instruction(
+    debugger: &mut AsyncDebugClient, 
+    process_id: ProcessId, 
+    address: Address, 
+    arch: &Architecture
+) {
+    let bp_instruction = arch.breakpoint_instruction();
+    let nop_instruction = arch.nop_instruction();
+    
+    // Read memory at breakpoint address to verify it's a breakpoint instruction
+    match debugger.read_process_memory(process_id, address, bp_instruction.len()).await {
+        Ok(memory_bytes) => {
+            if arch.is_breakpoint(&memory_bytes) {
+                info!(
+                    address = format_args!("0x{:X}", address),
+                    bytes = format!("{:02X?}", memory_bytes),
+                    "✓ Confirmed breakpoint instruction at address"
+                );
+                
+                // Write nop instruction to replace the breakpoint
+                match debugger.write_process_memory(process_id, address, nop_instruction).await {
+                    Ok(()) => {
+                        info!(
+                            address = format_args!("0x{:X}", address),
+                            nop_bytes = format!("{:02X?}", nop_instruction),
+                            "✓ Successfully wrote NOP instruction to replace breakpoint"
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            address = format_args!("0x{:X}", address),
+                            error = %e,
+                            "Failed to write NOP instruction"
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    address = format_args!("0x{:X}", address),
+                    expected = format!("{:02X?}", bp_instruction),
+                    actual = format!("{:02X?}", memory_bytes),
+                    "Memory at breakpoint address does not contain expected breakpoint instruction"
+                );
+            }
+        }
+        Err(e) => {
+            error!(
+                address = format_args!("0x{:X}", address),
+                error = %e,
+                "Failed to read memory at breakpoint address"
+            );
+        }
+    }
+}
 
 async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: LaunchedProcessInfo) -> Vec<String> {
     info!(
@@ -42,6 +98,12 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                             address = format_args!("0x{:X}", address),
                             "Breakpoint hit in debuggee"
                         );
+                        
+                        // Get current architecture
+                        let arch = Architecture::current();
+                        
+                        handle_breakpoint_instruction(debugger, process_id, address, &arch).await;
+                        
                         continue_decision = ContinueDecision::HandledException;
                     }
                     DebugEvent::ProcessCreated { process_id, thread_id, ref image_file_name, base_of_image, size_of_image } => {

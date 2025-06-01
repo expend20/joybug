@@ -7,7 +7,7 @@ use crate::debugger_interface::{
 };
 use crate::debug_server::{
     LaunchRequest, LaunchResponse, WaitForEventResponse, ContinueEventRequest,
-    ReadMemoryRequest, ReadMemoryResponse, ContinueDecisionRequest
+    ReadMemoryRequest, ReadMemoryResponse, WriteMemoryRequest, ContinueDecisionRequest
 };
 
 /// A debugger client that communicates with a debug server via HTTP
@@ -244,6 +244,48 @@ impl AsyncDebugClient {
 
         debug!("Read {} bytes from memory", memory_response.data.len());
         Ok(memory_response.data)
+    }
+
+    pub async fn write_process_memory(
+        &mut self,
+        process_id: ProcessId,
+        address: Address,
+        data: &[u8],
+    ) -> Result<(), DebuggerError> {
+        let session_id = self.session_id.as_ref()
+            .ok_or_else(|| DebuggerError::Other("No active session".to_string()))?;
+
+        let request = WriteMemoryRequest {
+            process_id,
+            address: format!("0x{:X}", address),
+            data: data.to_vec(),
+        };
+
+        debug!("Sending write memory request: {:?}", request);
+
+        let response = self.client
+            .post(&format!("{}/sessions/{}/write_memory", self.base_url, session_id))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Failed to send write_memory request: {}", e);
+                DebuggerError::WriteProcessMemoryFailed(format!("Network error: {}", e))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            error!("Write memory request failed with status {}: {}", status, error_text);
+            return Err(DebuggerError::WriteProcessMemoryFailed(format!(
+                "Server returned status {}: {}",
+                status,
+                error_text
+            )));
+        }
+
+        debug!("Wrote {} bytes to memory", data.len());
+        Ok(())
     }
 }
 
@@ -492,5 +534,56 @@ impl Debugger for DebugClient {
 
         debug!("Read {} bytes from memory", memory_response.data.len());
         Ok(memory_response.data)
+    }
+
+    fn write_process_memory(
+        &mut self,
+        process_id: ProcessId,
+        address: Address,
+        data: &[u8],
+    ) -> Result<(), DebuggerError> {
+        let session_id = self.session_id.as_ref()
+            .ok_or_else(|| DebuggerError::Other("No active session".to_string()))?;
+
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| DebuggerError::Other(format!("Failed to create runtime: {}", e)))?;
+
+        let request = WriteMemoryRequest {
+            process_id,
+            address: format!("0x{:X}", address),
+            data: data.to_vec(),
+        };
+
+        debug!("Sending write memory request: {:?}", request);
+
+        let response = rt.block_on(async {
+            self.client
+                .post(&format!("{}/sessions/{}/write_memory", self.base_url, session_id))
+                .json(&request)
+                .send()
+                .await
+        });
+
+        let response = match response {
+            Ok(resp) => resp,
+            Err(e) => {
+                error!("Failed to send write_memory request: {}", e);
+                return Err(DebuggerError::WriteProcessMemoryFailed(format!("Network error: {}", e)));
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = rt.block_on(async { response.text().await.unwrap_or_default() });
+            error!("Write memory request failed with status {}: {}", status, error_text);
+            return Err(DebuggerError::WriteProcessMemoryFailed(format!(
+                "Server returned status {}: {}",
+                status,
+                error_text
+            )));
+        }
+
+        debug!("Wrote {} bytes to memory", data.len());
+        Ok(())
     }
 } 

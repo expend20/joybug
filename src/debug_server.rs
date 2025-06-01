@@ -53,6 +53,13 @@ pub struct ReadMemoryResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct WriteMemoryRequest {
+    pub process_id: u32,
+    pub address: String, // hex string like "0x12345678"
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum ContinueDecisionRequest {
     Continue,
     HandledException,
@@ -309,6 +316,62 @@ async fn read_memory(
     }
 }
 
+async fn write_memory(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<WriteMemoryRequest>,
+) -> Result<Json<()>, (StatusCode, Json<ErrorResponse>)> {
+    debug!("Write memory request for session {}: {:?}", session_id, request);
+    
+    // Parse address from hex string
+    let address = if request.address.starts_with("0x") || request.address.starts_with("0X") {
+        usize::from_str_radix(&request.address[2..], 16)
+    } else {
+        request.address.parse::<usize>()
+    };
+    
+    let address = match address {
+        Ok(addr) => addr,
+        Err(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid address format".to_string(),
+                }),
+            ));
+        }
+    };
+    
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = match sessions.get_mut(&session_id) {
+        Some(s) => s,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Session not found".to_string(),
+                }),
+            ));
+        }
+    };
+    
+    match session.debugger.write_process_memory(request.process_id, address, &request.data) {
+        Ok(()) => {
+            debug!("Wrote {} bytes to address 0x{:X} in session {}", request.data.len(), address, session_id);
+            Ok(Json(()))
+        }
+        Err(e) => {
+            error!("Failed to write memory in session {}: {}", session_id, e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to write memory: {}", e),
+                }),
+            ))
+        }
+    }
+}
+
 async fn list_sessions(
     State(state): State<AppState>,
 ) -> Json<Vec<String>> {
@@ -326,6 +389,7 @@ pub fn create_router() -> Router {
         .route("/sessions/:session_id/continue", post(continue_event))
         .route("/sessions/:session_id/detach", post(detach_debugger))
         .route("/sessions/:session_id/read_memory", post(read_memory))
+        .route("/sessions/:session_id/write_memory", post(write_memory))
         .route("/sessions", get(list_sessions))
         .with_state(state)
 }

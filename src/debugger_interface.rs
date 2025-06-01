@@ -194,6 +194,7 @@ pub enum DebuggerError {
     WaitForEventFailed(String),
     ContinueEventFailed(String),
     ReadProcessMemoryFailed(String),
+    WriteProcessMemoryFailed(String),
     Other(String),
 }
 
@@ -204,6 +205,7 @@ impl std::fmt::Display for DebuggerError {
             DebuggerError::WaitForEventFailed(s) => write!(f, "Wait for event failed: {}", s),
             DebuggerError::ContinueEventFailed(s) => write!(f, "Continue event failed: {}", s),
             DebuggerError::ReadProcessMemoryFailed(s) => write!(f, "Read process memory failed: {}", s),
+            DebuggerError::WriteProcessMemoryFailed(s) => write!(f, "Write process memory failed: {}", s),
             DebuggerError::Other(s) => write!(f, "Debugger error: {}", s),
         }
     }
@@ -245,8 +247,16 @@ pub trait Debugger {
         size: usize,
     ) -> Result<Vec<u8>, DebuggerError>;
 
+    /// Writes memory to the debugged process.
+    /// Returns success or an error.
+    fn write_process_memory(
+        &mut self,
+        process_id: ProcessId,
+        address: Address,
+        data: &[u8],
+    ) -> Result<(), DebuggerError>;
+
     // Potentially other methods like:
-    // fn write_memory(&mut self, process_id: ProcessId, address: Address, data: &[u8]) -> Result<(), DebuggerError>;
     // fn set_breakpoint(&mut self, process_id: ProcessId, address: Address) -> Result<(), DebuggerError>;
     // fn remove_breakpoint(&mut self, process_id: ProcessId, address: Address) -> Result<(), DebuggerError>;
     // fn get_registers(&self, thread_id: ThreadId) -> Result<Registers, DebuggerError>; // Registers would be another struct

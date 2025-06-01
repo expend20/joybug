@@ -12,7 +12,7 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
     CREATE_THREAD_DEBUG_EVENT, EXIT_THREAD_DEBUG_EVENT, LOAD_DLL_DEBUG_EVENT, UNLOAD_DLL_DEBUG_EVENT,
     RIP_EVENT,
 };
-#[allow(unused_imports)] use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+#[allow(unused_imports)] use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows_sys::Win32::System::Threading::{
     PROCESS_INFORMATION, STARTUPINFOW, CreateProcessW, DEBUG_PROCESS, INFINITE,
 };
@@ -325,6 +325,49 @@ impl Debugger for WindowsDebugger {
             )))
         } else {
             Ok(buffer)
+        }
+    }
+
+    fn write_process_memory(
+        &mut self,
+        _process_id: ProcessId, // process_id is implicitly handled by self.process_info.hProcess
+        address: Address,
+        data: &[u8],
+    ) -> Result<(), DebuggerError> {
+        let process_handle = match self.process_info {
+            Some(ref pi) => pi.hProcess,
+            None => return Err(DebuggerError::Other("Process not launched or already detached".to_string())),
+        };
+
+        if process_handle.is_null() || process_handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            return Err(DebuggerError::Other("Invalid process handle".to_string()));
+        }
+
+        let mut bytes_written: usize = 0;
+
+        let success = unsafe {
+            WriteProcessMemory(
+                process_handle,
+                address as *mut _,
+                data.as_ptr() as *const _,
+                data.len(),
+                &mut bytes_written,
+            )
+        };
+
+        if success == FALSE {
+            let error = unsafe { GetLastError() };
+            Err(DebuggerError::WriteProcessMemoryFailed(format!(
+                "WriteProcessMemory failed with error: {}. Tried to write {} bytes to address 0x{:X}",
+                error, data.len(), address
+            )))
+        } else if bytes_written != data.len() {
+            Err(DebuggerError::WriteProcessMemoryFailed(format!(
+                "WriteProcessMemory wrote {} bytes, expected {}",
+                bytes_written, data.len()
+            )))
+        } else {
+            Ok(())
         }
     }
 } 
