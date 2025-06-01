@@ -1,22 +1,26 @@
+use serde::{Deserialize};
+
 // Platform-agnostic Process and Thread IDs
 pub type ProcessId = u32;
 pub type ThreadId = u32;
 pub type Address = usize; // Using usize for memory addresses
 
 /// Basic information about the launched process.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct LaunchedProcessInfo {
     pub process_id: ProcessId,
     pub thread_id: ThreadId,
 }
 
 /// Platform-agnostic representation of a debug event.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "data")]
 pub enum DebugEvent {
     ProcessCreated {
         process_id: ProcessId,
         thread_id: ThreadId,
         image_file_name: Option<String>, // Name of the executable file
+        #[serde(serialize_with = "serialize_address", deserialize_with = "deserialize_address")]
         base_of_image: Address,          // Base address of the executable in memory
         size_of_image: Option<usize>,    // Size of the executable in memory
         // Note: Windows provides a file handle here, which we might abstract or ignore for minimality
@@ -24,12 +28,14 @@ pub enum DebugEvent {
     ThreadCreated {
         process_id: ProcessId,
         thread_id: ThreadId,
+        #[serde(serialize_with = "serialize_address", deserialize_with = "deserialize_address")]
         start_address: Address, // Starting address of the thread
     },
     ExceptionOccurred {
         process_id: ProcessId,
         thread_id: ThreadId,
         exception_code: i32,         // Platform-specific exception code
+        #[serde(serialize_with = "serialize_address", deserialize_with = "deserialize_address")]
         exception_address: Address,
         is_first_chance: bool,
     },
@@ -37,6 +43,7 @@ pub enum DebugEvent {
         // This is a specific type of exception, often treated specially
         process_id: ProcessId,
         thread_id: ThreadId,
+        #[serde(serialize_with = "serialize_address", deserialize_with = "deserialize_address")]
         address: Address,
     },
     OutputDebugString {
@@ -48,12 +55,14 @@ pub enum DebugEvent {
         process_id: ProcessId,
         thread_id: ThreadId,
         dll_name: Option<String>,
+        #[serde(serialize_with = "serialize_address", deserialize_with = "deserialize_address")]
         base_of_dll: Address,
         size_of_dll: Option<usize>,     // Size of the DLL in memory
     },
     DllUnloaded {
         process_id: ProcessId,
         thread_id: ThreadId,
+        #[serde(serialize_with = "serialize_address", deserialize_with = "deserialize_address")]
         base_of_dll: Address,
     },
     ThreadExited {
@@ -73,6 +82,26 @@ pub enum DebugEvent {
         event_type: u32,
     },
     Unknown,
+}
+
+// Custom serialization functions for addresses
+fn serialize_address<S>(addr: &Address, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&format!("0x{:X}", addr))
+}
+
+fn deserialize_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.starts_with("0x") || s.starts_with("0X") {
+        usize::from_str_radix(&s[2..], 16).map_err(serde::de::Error::custom)
+    } else {
+        s.parse::<usize>().map_err(serde::de::Error::custom)
+    }
 }
 
 impl std::fmt::Debug for DebugEvent {
