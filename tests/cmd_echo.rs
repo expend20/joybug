@@ -1,14 +1,16 @@
-use joy_bug::debugger_interface::{Debugger, DebugEvent, ContinueDecision, LaunchedProcessInfo};
-use joy_bug::windows_debugger::WindowsDebugger;
+use joy_bug::debugger_interface::{Debugger, DebugEvent, ContinueDecision, LaunchedProcessInfo, ProcessId, Address};
+use joy_bug::windows::WindowsDebugger;
 use joy_bug::logging;
-use tracing::{info, error, warn, debug};
+use tracing::{info, error, warn, debug, trace};
 
-fn main_loop(debugger: &mut dyn Debugger, initial_process_info: LaunchedProcessInfo) {
+fn main_loop(debugger: &mut dyn Debugger, initial_process_info: LaunchedProcessInfo) -> Vec<String> {
     info!(
         pid = initial_process_info.process_id,
         tid = initial_process_info.thread_id,
         "Process launched successfully, entering debug loop"
     );
+
+    let mut loaded_dlls: Vec<String> = Vec::new();
 
     loop {
         match debugger.wait_for_event() {
@@ -40,15 +42,24 @@ fn main_loop(debugger: &mut dyn Debugger, initial_process_info: LaunchedProcessI
                         );
                         continue_decision = ContinueDecision::HandledException;
                     }
-                    DebugEvent::ProcessCreated { process_id, thread_id, ref image_file_name, base_of_image } => {
+                    DebugEvent::ProcessCreated { process_id, thread_id, ref image_file_name, base_of_image, size_of_image } => {
                         info!(
                             event_type = "ProcessCreated",
                             pid = process_id,
                             tid = thread_id,
                             image_name = image_file_name.as_deref().unwrap_or("<unknown>"),
                             base = format_args!("0x{:X}", base_of_image),
+                            size = size_of_image.map(|s| format!("0x{:X}", s)).as_deref().unwrap_or("<unknown>"),
                             "Debuggee process created"
                         );
+                        
+                        // Verify that we got a valid module size for the main process
+                        if let Some(size) = size_of_image {
+                            assert!(size > 0, "Process module size should be greater than 0, got: {}", size);
+                            info!("✓ Process module size verified: 0x{:X} bytes", size);
+                        } else {
+                            warn!("Process module size not available");
+                        }
                     }
                     DebugEvent::ProcessExited { process_id, thread_id, exit_code } => {
                         info!(
@@ -78,15 +89,30 @@ fn main_loop(debugger: &mut dyn Debugger, initial_process_info: LaunchedProcessI
                             "Thread exited in debuggee"
                         );
                     }
-                    DebugEvent::DllLoaded { process_id, thread_id, ref dll_name, base_of_dll } => {
+                    DebugEvent::DllLoaded { process_id, thread_id, ref dll_name, base_of_dll, size_of_dll } => {
+                        let dll_name_str = dll_name.as_deref().unwrap_or("<unknown>");
                         info!(
                             event_type = "DllLoaded",
                             pid = process_id,
                             tid = thread_id,
-                            name = dll_name.as_deref().unwrap_or("<unknown>"),
+                            name = dll_name_str,
                             base = format_args!("0x{:X}", base_of_dll),
+                            size = size_of_dll.map(|s| format!("0x{:X}", s)).as_deref().unwrap_or("<unknown>"),
                             "DLL loaded in debuggee"
                         );
+
+                        // Verify that we got a valid module size for DLLs
+                        if let Some(size) = size_of_dll {
+                            assert!(size > 0, "DLL '{}' module size should be greater than 0, got: {}", dll_name_str, size);
+                            info!("✓ DLL '{}' module size verified: 0x{:X} bytes", dll_name_str, size);
+                        } else {
+                            warn!("DLL '{}' module size not available", dll_name_str);
+                        }
+
+                        // Track loaded DLLs
+                        loaded_dlls.push(dll_name_str.to_string());
+
+                        verify_dos_header(debugger, process_id, base_of_dll);
                     }
                     DebugEvent::DllUnloaded { process_id, thread_id, base_of_dll } => {
                         info!(
@@ -152,6 +178,48 @@ fn main_loop(debugger: &mut dyn Debugger, initial_process_info: LaunchedProcessI
             }
         }
     }
+
+    loaded_dlls
+}
+
+fn verify_dos_header(debugger: &dyn Debugger, process_id: ProcessId, base_of_dll: Address) {
+    trace!(
+        pid = process_id,
+        dll_base = format_args!("0x{:X}", base_of_dll),
+        "Verifying DOS header for loaded DLL."
+    );
+    match debugger.read_process_memory(process_id, base_of_dll, 2) {
+        Ok(header_bytes) => {
+            if header_bytes.len() == 2 && header_bytes[0] == b'M' && header_bytes[1] == b'Z' {
+                trace!(
+                    pid = process_id,
+                    dll_base = format_args!("0x{:X}", base_of_dll),
+                    magic = format!("{}{}", header_bytes[0] as char, header_bytes[1] as char),
+                    "DOS magic 'MZ' confirmed for loaded DLL."
+                );
+            } else {
+                error!(
+                    pid = process_id,
+                    dll_base = format_args!("0x{:X}", base_of_dll),
+                    header = ?header_bytes,
+                    "Invalid or unexpected DOS magic for loaded DLL."
+                );
+                panic!(
+                    "DOS header magic mismatch for DLL at 0x{:X}. Expected 'MZ', got {:?}",
+                    base_of_dll, header_bytes
+                );
+            }
+        }
+        Err(e) => {
+            error!(
+                pid = process_id,
+                dll_base = format_args!("0x{:X}", base_of_dll),
+                error = %e,
+                "Failed to read DOS header of loaded DLL."
+            );
+            panic!("Failed to read DOS header for DLL at 0x{:X}: {}", base_of_dll, e);
+        }
+    }
 }
 
 #[test]
@@ -165,7 +233,23 @@ fn test_debugger_main_loop() {
 
     match debugger.launch(command_to_run) {
         Ok(process_info) => {
-            main_loop(debugger.as_mut(), process_info);
+            let loaded_dlls = main_loop(debugger.as_mut(), process_info);
+            
+            info!(dlls = ?loaded_dlls, "Loaded DLLs during execution");
+            
+            // Check that we have at least one DLL loaded
+            assert!(!loaded_dlls.is_empty(), "Expected at least one DLL to be loaded");
+            
+            // Check that the first loaded DLL is ntdll.dll (case insensitive)
+            let first_dll = &loaded_dlls[0];
+            let first_dll_lower = first_dll.to_lowercase();
+            assert!(
+                first_dll_lower.contains("ntdll.dll") || first_dll_lower.ends_with("ntdll.dll"),
+                "Expected first loaded DLL to be ntdll.dll, but got: {}",
+                first_dll
+            );
+            
+            info!("✓ Verified that ntdll.dll is the first loaded module");
         }
         Err(e) => {
             error!(error = %e, "Failed to launch process");

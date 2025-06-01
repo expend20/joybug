@@ -1,9 +1,10 @@
-use super::debugger_interface::*;
+use crate::debugger_interface::*;
+use super::utils::{get_path_from_handle, get_module_size_from_address};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, FALSE, /* TRUE, */ GetLastError, DBG_CONTINUE, DBG_EXCEPTION_NOT_HANDLED, HANDLE,
+    CloseHandle, FALSE, /* TRUE, */ GetLastError, DBG_CONTINUE, DBG_EXCEPTION_NOT_HANDLED, HANDLE
 };
 use windows_sys::Win32::System::Diagnostics::Debug::{
     ContinueDebugEvent, DEBUG_EVENT, EXCEPTION_DEBUG_EVENT,
@@ -15,7 +16,6 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 use windows_sys::Win32::System::Threading::{
     PROCESS_INFORMATION, STARTUPINFOW, CreateProcessW, DEBUG_PROCESS, INFINITE,
 };
-#[allow(unused_imports)] use windows_sys::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 
 #[allow(dead_code)] // Allow dead code for this function
 fn to_wide_chars_debugger(s: &str) -> Vec<u16> { 
@@ -57,10 +57,8 @@ impl WindowsDebugger {
         None
     }
     
-    #[allow(unused_variables)] // Allow unused variables for this method
     fn get_file_name_from_handle(&self, file_handle: HANDLE) -> Option<String> {
-        // Reading file name from handle is temporarily disabled by user request.
-        None
+        get_path_from_handle(file_handle)
     }
 
 }
@@ -148,6 +146,7 @@ impl Debugger for WindowsDebugger {
                 // For simplicity, we might need to pass this specific hProcess to helper functions if needed.
                 
                 let image_name = self.get_file_name_from_handle(info.hFile);
+                let image_size = get_module_size_from_address(info.hProcess, info.lpBaseOfImage as usize);
                 
                 // The hFile in CreateProcessInfo should be closed.
                 if !info.hFile.is_null() && info.hFile != ptr::null_mut() {
@@ -159,6 +158,7 @@ impl Debugger for WindowsDebugger {
                     thread_id: current_tid,
                     image_file_name: image_name, 
                     base_of_image: info.lpBaseOfImage as Address,
+                    size_of_image: image_size,
                 })
             }
             EXIT_PROCESS_DEBUG_EVENT => {
@@ -190,7 +190,9 @@ impl Debugger for WindowsDebugger {
             }
             LOAD_DLL_DEBUG_EVENT => {
                 let info = unsafe { debug_event_raw.u.LoadDll };
-                let dll_name = None; // Disabled by user request
+                let dll_name = self.get_file_name_from_handle(info.hFile);
+                let dll_size = get_module_size_from_address(process_handle, info.lpBaseOfDll as usize);
+                
                 // The hFile in LoadDllInfo should be closed.
                 if !info.hFile.is_null() && info.hFile != ptr::null_mut() {
                     unsafe { CloseHandle(info.hFile) };
@@ -200,6 +202,7 @@ impl Debugger for WindowsDebugger {
                     thread_id: current_tid,
                     dll_name,
                     base_of_dll: info.lpBaseOfDll as Address,
+                    size_of_dll: dll_size,
                 })
             }
             UNLOAD_DLL_DEBUG_EVENT => {
@@ -280,4 +283,48 @@ impl Debugger for WindowsDebugger {
         // Any other cleanup specific to WindowsDebugger
         Ok(())
     }
-}
+
+    fn read_process_memory(
+        &self,
+        _process_id: ProcessId, // process_id is implicitly handled by self.process_info.hProcess
+        address: Address,
+        size: usize,
+    ) -> Result<Vec<u8>, DebuggerError> {
+        let process_handle = match self.process_info {
+            Some(ref pi) => pi.hProcess,
+            None => return Err(DebuggerError::Other("Process not launched or already detached".to_string())),
+        };
+
+        if process_handle.is_null() || process_handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            return Err(DebuggerError::Other("Invalid process handle".to_string()));
+        }
+
+        let mut buffer: Vec<u8> = vec![0; size];
+        let mut bytes_read: usize = 0;
+
+        let success = unsafe {
+            ReadProcessMemory(
+                process_handle,
+                address as *const _,
+                buffer.as_mut_ptr() as *mut _,
+                size,
+                &mut bytes_read,
+            )
+        };
+
+        if success == FALSE {
+            let error = unsafe { GetLastError() };
+            Err(DebuggerError::ReadProcessMemoryFailed(format!(
+                "ReadProcessMemory failed with error: {}. Tried to read {} bytes from address 0x{:X}",
+                error, size, address
+            )))
+        } else if bytes_read != size {
+            Err(DebuggerError::ReadProcessMemoryFailed(format!(
+                "ReadProcessMemory read {} bytes, expected {}",
+                bytes_read, size
+            )))
+        } else {
+            Ok(buffer)
+        }
+    }
+} 

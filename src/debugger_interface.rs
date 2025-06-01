@@ -18,6 +18,7 @@ pub enum DebugEvent {
         thread_id: ThreadId,
         image_file_name: Option<String>, // Name of the executable file
         base_of_image: Address,          // Base address of the executable in memory
+        size_of_image: Option<usize>,    // Size of the executable in memory
         // Note: Windows provides a file handle here, which we might abstract or ignore for minimality
     },
     ThreadCreated {
@@ -48,6 +49,7 @@ pub enum DebugEvent {
         thread_id: ThreadId,
         dll_name: Option<String>,
         base_of_dll: Address,
+        size_of_dll: Option<usize>,     // Size of the DLL in memory
     },
     DllUnloaded {
         process_id: ProcessId,
@@ -76,12 +78,13 @@ pub enum DebugEvent {
 impl std::fmt::Debug for DebugEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DebugEvent::ProcessCreated { process_id, thread_id, image_file_name, base_of_image } => f
+            DebugEvent::ProcessCreated { process_id, thread_id, image_file_name, base_of_image, size_of_image } => f
                 .debug_struct("ProcessCreated")
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
                 .field("image_file_name", image_file_name)
                 .field("base_of_image", &format_args!("0x{:X}", base_of_image))
+                .field("size_of_image", &size_of_image.map(|s| format!("0x{:X}", s)))
                 .finish(),
             DebugEvent::ThreadCreated { process_id, thread_id, start_address } => f
                 .debug_struct("ThreadCreated")
@@ -109,12 +112,13 @@ impl std::fmt::Debug for DebugEvent {
                 .field("thread_id", thread_id)
                 .field("message", message)
                 .finish(),
-            DebugEvent::DllLoaded { process_id, thread_id, dll_name, base_of_dll } => f
+            DebugEvent::DllLoaded { process_id, thread_id, dll_name, base_of_dll, size_of_dll } => f
                 .debug_struct("DllLoaded")
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
                 .field("dll_name", dll_name)
                 .field("base_of_dll", &format_args!("0x{:X}", base_of_dll))
+                .field("size_of_dll", &size_of_dll.map(|s| format!("0x{:X}", s)))
                 .finish(),
             DebugEvent::DllUnloaded { process_id, thread_id, base_of_dll } => f
                 .debug_struct("DllUnloaded")
@@ -203,8 +207,16 @@ pub trait Debugger {
     /// Optional for a minimal implementation, but good practice.
     fn detach(&mut self) -> Result<(), DebuggerError>;
 
+    /// Reads memory from the debugged process.
+    /// Returns a vector of bytes or an error.
+    fn read_process_memory(
+        &self,
+        process_id: ProcessId,
+        address: Address,
+        size: usize,
+    ) -> Result<Vec<u8>, DebuggerError>;
+
     // Potentially other methods like:
-    // fn read_memory(&self, process_id: ProcessId, address: Address, size: usize) -> Result<Vec<u8>, DebuggerError>;
     // fn write_memory(&mut self, process_id: ProcessId, address: Address, data: &[u8]) -> Result<(), DebuggerError>;
     // fn set_breakpoint(&mut self, process_id: ProcessId, address: Address) -> Result<(), DebuggerError>;
     // fn remove_breakpoint(&mut self, process_id: ProcessId, address: Address) -> Result<(), DebuggerError>;
