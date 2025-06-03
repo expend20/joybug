@@ -42,7 +42,7 @@ The debug server interface consists of three main components:
 ### Starting the Server
 
 ```rust
-use joy_bug::debug_server;
+use joybug::debug_server;
 
 #[tokio::main]
 async fn main() {
@@ -53,7 +53,7 @@ async fn main() {
 ### Using the Async Client
 
 ```rust
-use joy_bug::debug_client::AsyncDebugClient;
+use joybug::debug_client::AsyncDebugClient;
 
 #[tokio::main]
 async fn main() {
@@ -84,8 +84,8 @@ async fn main() {
 ### Using the Sync Client (implements Debugger trait)
 
 ```rust
-use joy_bug::debug_client::DebugClient;
-use joy_bug::debugger_interface::Debugger;
+use joybug::debug_client::DebugClient;
+use joybug::debugger_interface::Debugger;
 
 fn main() {
     let mut client: Box<dyn Debugger> = Box::new(DebugClient::new("http://127.0.0.1:8080".to_string()));

@@ -2,7 +2,7 @@ use tracing::{info};
 
 // Modules are now in lib.rs
 
-use joy_bug::logging; // Added to use the library's logging module
+use joybug::logging; // Added to use the library's logging module
 
 fn main() {
     // Initialize logging from the library

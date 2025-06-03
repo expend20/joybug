@@ -1,10 +1,10 @@
-use joy_bug::debugger_interface::{DebugEvent, ContinueDecision, LaunchedProcessInfo, ProcessId, Address};
-use joy_bug::debug_client::AsyncDebugClient;
-use joy_bug::debug_server;
-use joy_bug::logging;
-use joy_bug::arch::Architecture;
-use joy_bug::debugger_interface::SymbolProvider;
-use joy_bug::windows::windows_symbol_provider::WindowsSymbolProvider;
+use joybug::debugger_interface::{DebugEvent, ContinueDecision, LaunchedProcessInfo, ProcessId, Address};
+use joybug::debug_client::AsyncDebugClient;
+use joybug::debug_server;
+use joybug::logging;
+use joybug::arch::Architecture;
+use joybug::debugger_interface::SymbolProvider;
+use joybug::windows::windows_symbol_provider::WindowsSymbolProvider;
 use tracing::{info, error, warn, debug, trace};
 use std::time::Duration;
 use std::collections::HashMap;

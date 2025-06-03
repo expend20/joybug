@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use tokio;
-use joy_bug::debugger_interface::{SymbolProvider, Symbol};
-use joy_bug::windows::windows_symbol_provider::WindowsSymbolProvider;
-use joy_bug::logging;
+use joybug::debugger_interface::{SymbolProvider, Symbol};
+use joybug::windows::windows_symbol_provider::WindowsSymbolProvider;
+use joybug::logging;
 use std::fs::{File, create_dir_all};
 use std::io::{BufWriter, Write};
 use tracing::info;
