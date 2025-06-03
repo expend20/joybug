@@ -107,11 +107,9 @@ async fn handle_breakpoint_instruction(
                     }
                 }
             } else {
-                warn!(
-                    address = format_args!("0x{:X}", address),
-                    expected = format!("{:02X?}", bp_instruction),
-                    actual = format!("{:02X?}", memory_bytes),
-                    "Memory at breakpoint address does not contain expected breakpoint instruction"
+                panic!(
+                    "Memory at breakpoint address 0x{:X} does not contain expected breakpoint instruction. Expected: {:02X?}, Actual: {:02X?}",
+                    address, bp_instruction, memory_bytes
                 );
             }
         }

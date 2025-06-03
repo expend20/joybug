@@ -28,7 +28,7 @@ impl Architecture {
     pub fn breakpoint_instruction(&self) -> &'static [u8] {
         match self {
             Architecture::X64 => &[0xCC], // int3
-            Architecture::Arm64 => &[0x00, 0x00, 0x20, 0xD4], // brk #0 in little-endian
+            Architecture::Arm64 => &[0x00, 0x00, 0x3E, 0xD4], // brk #0xF000 in little-endian (updated based on user feedback)
         }
     }
 
