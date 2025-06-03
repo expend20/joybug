@@ -3,17 +3,80 @@ use joy_bug::debug_client::AsyncDebugClient;
 use joy_bug::debug_server;
 use joy_bug::logging;
 use joy_bug::arch::Architecture;
+use joy_bug::debugger_interface::SymbolProvider;
+use joy_bug::windows::windows_symbol_provider::WindowsSymbolProvider;
 use tracing::{info, error, warn, debug, trace};
 use std::time::Duration;
+use std::collections::HashMap;
 
 async fn handle_breakpoint_instruction(
     debugger: &mut AsyncDebugClient, 
     process_id: ProcessId, 
     address: Address, 
-    arch: &Architecture
+    arch: &Architecture,
+    symbol_provider: &WindowsSymbolProvider,
+    loaded_modules: &HashMap<String, (Address, Option<usize>)>
 ) {
     let bp_instruction = arch.breakpoint_instruction();
     let nop_instruction = arch.nop_instruction();
+    
+    // Try to resolve symbol for the breakpoint address
+    let mut symbol_info = String::from("Symbol not resolved");
+    
+    // Try to find which module this address belongs to
+    for (module_name, (base_address, module_size)) in loaded_modules {
+        if let Some(size) = module_size {
+            let module_end = base_address + size;
+            if address >= *base_address && address < module_end {
+                let rva = (address - base_address) as u32;
+                info!(
+                    address = format_args!("0x{:X}", address),
+                    module = module_name,
+                    base = format_args!("0x{:X}", base_address),
+                    rva = format_args!("0x{:X}", rva),
+                    "Breakpoint address belongs to module"
+                );
+                
+                // Try to resolve symbol
+                match symbol_provider.resolve_rva_to_symbol(module_name, rva).await {
+                    Ok(Some(symbol)) => {
+                        if symbol.rva == rva {
+                            symbol_info = format!("{}!{}", module_name, symbol.name);
+                        } else {
+                            let distance = rva - symbol.rva;
+                            symbol_info = format!("{}!{}+0x{:X}", module_name, symbol.name, distance);
+                        }
+                    }
+                    Ok(None) => {
+                        symbol_info = format!("{}!<no symbol>", module_name);
+                    }
+                    Err(e) => {
+                        warn!(
+                            module = module_name,
+                            error = %e,
+                            "Failed to resolve symbol for RVA"
+                        );
+                        symbol_info = format!("{}!<symbol resolution failed>", module_name);
+                    }
+                }
+                break;
+            }
+        }
+    }
+    
+    info!(
+        address = format_args!("0x{:X}", address),
+        symbol = %symbol_info,
+        "🎯 Breakpoint hit with symbol information"
+    );
+
+    // Assert that the breakpoint symbol is LdrpDoDebuggerBreak
+    // It can sometimes be ntdll.dll!LdrpDoDebuggerBreak or ntdll!LdrpDoDebuggerBreak
+    assert!(
+        symbol_info.contains("LdrpDoDebuggerBreak"),
+        "Expected breakpoint symbol to contain LdrpDoDebuggerBreak, but got: {}",
+        symbol_info
+    );
     
     // Read memory at breakpoint address to verify it's a breakpoint instruction
     match debugger.read_process_memory(process_id, address, bp_instruction.len()).await {
@@ -22,6 +85,7 @@ async fn handle_breakpoint_instruction(
                 info!(
                     address = format_args!("0x{:X}", address),
                     bytes = format!("{:02X?}", memory_bytes),
+                    symbol = %symbol_info,
                     "✓ Confirmed breakpoint instruction at address"
                 );
                 
@@ -69,6 +133,16 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
     );
 
     let mut loaded_dlls: Vec<String> = Vec::new();
+    let mut loaded_modules: HashMap<String, (Address, Option<usize>)> = HashMap::new();
+    
+    // Create symbol provider
+    let mut symbol_provider = match WindowsSymbolProvider::new() {
+        Ok(provider) => provider,
+        Err(e) => {
+            warn!(error = %e, "Failed to create WindowsSymbolProvider, symbol resolution will be disabled");
+            WindowsSymbolProvider::new().unwrap_or_else(|_| panic!("Cannot create fallback symbol provider"))
+        }
+    };
 
     loop {
         match debugger.wait_for_event().await {
@@ -102,7 +176,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                         // Get current architecture
                         let arch = Architecture::current();
                         
-                        handle_breakpoint_instruction(debugger, process_id, address, &arch).await;
+                        handle_breakpoint_instruction(debugger, process_id, address, &arch, &symbol_provider, &loaded_modules).await;
                         
                         continue_decision = ContinueDecision::HandledException;
                     }
@@ -116,6 +190,25 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                             size = size_of_image.map(|s| format!("0x{:X}", s)).as_deref().unwrap_or("<unknown>"),
                             "Debuggee process created"
                         );
+                        
+                        // Track the main process module
+                        if let Some(image_name) = image_file_name {
+                            loaded_modules.insert(image_name.clone(), (base_of_image, size_of_image));
+                            
+                            // Try to load symbols for the main process
+                            if let Err(e) = symbol_provider.load_symbols_for_module(image_name, base_of_image, size_of_image).await {
+                                debug!(
+                                    module = image_name,
+                                    error = %e,
+                                    "Failed to load symbols for main process module"
+                                );
+                            } else {
+                                info!(
+                                    module = image_name,
+                                    "✓ Symbols loaded successfully for main process module"
+                                );
+                            }
+                        }
                         
                         // Verify that we got a valid module size for the main process
                         if let Some(size) = size_of_image {
@@ -171,6 +264,23 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                             info!("✓ DLL '{}' module size verified: 0x{:X} bytes", dll_name_str, size);
                         } else {
                             warn!("DLL '{}' module size not available", dll_name_str);
+                        }
+
+                        // Track loaded modules
+                        loaded_modules.insert(dll_name_str.to_string(), (base_of_dll, size_of_dll));
+                        
+                        // Try to load symbols for this module
+                        if let Err(e) = symbol_provider.load_symbols_for_module(dll_name_str, base_of_dll, size_of_dll).await {
+                            debug!(
+                                module = dll_name_str,
+                                error = %e,
+                                "Failed to load symbols for module (this is often expected for system DLLs)"
+                            );
+                        } else {
+                            info!(
+                                module = dll_name_str,
+                                "✓ Symbols loaded successfully for module"
+                            );
                         }
 
                         // Track loaded DLLs

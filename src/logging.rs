@@ -4,5 +4,7 @@ pub fn init_subscriber() {
     tracing_subscriber::fmt()
         .without_time()
         .with_env_filter(EnvFilter::from_default_env())
-        .init();
+        .with_test_writer()
+        .try_init()
+        .ok();
 } 

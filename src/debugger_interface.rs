@@ -1,4 +1,5 @@
 use serde::{Deserialize};
+use async_trait::async_trait; // Added for SymbolProvider trait
 
 // Platform-agnostic Process and Thread IDs
 pub type ProcessId = u32;
@@ -212,6 +213,92 @@ impl std::fmt::Display for DebuggerError {
 }
 
 impl std::error::Error for DebuggerError {}
+
+// --- Additions for Symbol Handling ---
+
+/// Errors that can occur during symbol resolution.
+#[derive(Debug)]
+pub enum SymbolError {
+    ProviderNotInitialized,
+    ModuleNotLoaded(String), // Module name or path
+    SymbolsNotFound(String), // Module name or path for which symbols could not be found/loaded
+    SymbolResolutionFailed(String), // Symbol name that failed to resolve
+    PdbNotFound(String), // PDB file name or identifier
+    PdbParsingFailed(String), // PDB file name or path
+    PeParsingFailed(String), // PE file parsing issue
+    SymSrvError(String), // Error from symbol server interaction
+    IoError(std::io::Error),
+    Other(String),
+}
+
+impl std::fmt::Display for SymbolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SymbolError::ProviderNotInitialized => write!(f, "Symbol provider not initialized"),
+            SymbolError::ModuleNotLoaded(module) => write!(f, "Module not loaded: {}", module),
+            SymbolError::SymbolsNotFound(module) => write!(f, "Symbols not found for module: {}", module),
+            SymbolError::SymbolResolutionFailed(symbol) => write!(f, "Failed to resolve symbol: {}", symbol),
+            SymbolError::PdbNotFound(pdb) => write!(f, "PDB file not found: {}", pdb),
+            SymbolError::PdbParsingFailed(pdb) => write!(f, "Failed to parse PDB file: {}", pdb),
+            SymbolError::PeParsingFailed(file) => write!(f, "Failed to parse PE file: {}", file),
+            SymbolError::SymSrvError(s) => write!(f, "Symbol server error: {}", s),
+            SymbolError::IoError(e) => write!(f, "I/O error during symbol operation: {}", e),
+            SymbolError::Other(s) => write!(f, "Symbol error: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for SymbolError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SymbolError::IoError(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+/// Represents a symbol with its name and Relative Virtual Address (RVA).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Symbol {
+    pub name: String,
+    pub rva: u32, // Relative Virtual Address
+}
+
+/// Trait defining the interface for a symbol provider.
+/// A symbol provider is responsible for loading and querying symbols for modules.
+#[async_trait]
+pub trait SymbolProvider {
+    /// Ensures that symbols for a given module (identified by its path and base address) are loaded.
+    /// This might involve downloading PDBs or parsing symbol files.
+    async fn load_symbols_for_module(
+        &mut self,
+        module_path: &str,
+        module_base: Address,
+        module_size: Option<usize>,
+    ) -> Result<(), SymbolError>;
+
+    /// Finds a symbol by its name for a specific module.
+    async fn find_symbol(
+        &self,
+        module_path: &str,
+        symbol_name: &str,
+    ) -> Result<Option<Symbol>, SymbolError>;
+
+    /// Lists all known symbols for a specific module.
+    async fn list_symbols(&self, module_path: &str) -> Result<Vec<Symbol>, SymbolError>;
+
+    /// Resolves an RVA to a symbol name for a specific module.
+    async fn resolve_rva_to_symbol(
+        &self,
+        module_path: &str,
+        rva: u32,
+    ) -> Result<Option<Symbol>, SymbolError>;
+
+    // Optional: Method to get module base address if provider stores it and it's useful.
+    // async fn get_module_base(&self, module_path: &str) -> Result<Option<Address>, SymbolError>;
+}
+
+// --- End of Additions for Symbol Handling ---
 
 /// Trait defining the debugger interface.
 pub trait Debugger {

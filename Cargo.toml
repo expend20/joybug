@@ -26,3 +26,10 @@ uuid = { version = "1.0", features = ["v4"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
 reqwest = { version = "0.11", features = ["json"] } 
+# windows symbols
+pelite = "0.10.0"
+thiserror = "1.0"
+msvc-demangler = "0.11.0"
+symsrv = "0.5"
+pdb = "0.8"
+async-trait = "0.1"
