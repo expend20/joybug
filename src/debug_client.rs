@@ -7,8 +7,11 @@ use crate::debugger_interface::{
 };
 use crate::debug_server::{
     LaunchRequest, LaunchResponse, WaitForEventResponse, ContinueEventRequest,
-    ReadMemoryRequest, ReadMemoryResponse, WriteMemoryRequest, ContinueDecisionRequest
+    ReadMemoryRequest, ReadMemoryResponse, WriteMemoryRequest, ContinueDecisionRequest,
+    DisassembleRequest, DisassembleResponse
 };
+use crate::arch::Architecture;
+use crate::disassembler::DisassemblyResult;
 
 /// A debugger client that communicates with a debug server via HTTP
 pub struct DebugClient {
@@ -286,6 +289,57 @@ impl AsyncDebugClient {
 
         debug!("Wrote {} bytes to memory", data.len());
         Ok(())
+    }
+
+    pub async fn disassemble(
+        &self,
+        process_id: ProcessId,
+        address: Address,
+        size: usize,
+        max_instructions: Option<usize>,
+        architecture: Option<Architecture>,
+    ) -> Result<DisassemblyResult, DebuggerError> {
+        let session_id = self.session_id.as_ref()
+            .ok_or_else(|| DebuggerError::Other("No active session".to_string()))?;
+
+        let request = DisassembleRequest {
+            process_id,
+            address: format!("0x{:X}", address),
+            size,
+            max_instructions,
+            architecture,
+        };
+
+        debug!("Sending disassemble request: {:?}", request);
+
+        let response = self.client
+            .post(&format!("{}/sessions/{}/disassemble", self.base_url, session_id))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Failed to send disassemble request: {}", e);
+                DebuggerError::Other(format!("Network error: {}", e))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            error!("Disassemble request failed with status {}: {}", status, error_text);
+            return Err(DebuggerError::Other(format!(
+                "Server returned status {}: {}",
+                status,
+                error_text
+            )));
+        }
+
+        let disassemble_response: DisassembleResponse = response.json().await.map_err(|e| {
+            error!("Failed to parse disassemble response: {}", e);
+            DebuggerError::Other(format!("Failed to parse response: {}", e))
+        })?;
+
+        debug!("Disassembled {} instructions", disassemble_response.result.instructions.len());
+        Ok(disassemble_response.result)
     }
 }
 
