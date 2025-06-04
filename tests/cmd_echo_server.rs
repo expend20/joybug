@@ -9,6 +9,55 @@ use tracing::{info, error, warn, debug, trace};
 use std::time::Duration;
 use std::collections::HashMap;
 
+async fn disassemble_around_address(
+    debugger: &AsyncDebugClient,
+    process_id: ProcessId,
+    address: Address,
+    arch: &Architecture,
+    symbol_info: &str,
+) {
+    // Use the remote disassembly interface via the debug server
+    let memory_size = 64;
+    let start_address = address;
+    
+    info!(
+        address = format_args!("0x{:X}", address),
+        start = format_args!("0x{:X}", start_address),
+        size = memory_size,
+        symbol = %symbol_info,
+        "📋 Requesting disassembly from debug server"
+    );
+
+    // Use the remote disassembly API (limit to 10 instructions for readability)
+    match debugger.disassemble(process_id, start_address, memory_size, Some(10), Some(*arch)).await {
+        Ok(result) => {
+            info!(
+                instructions_found = result.instructions.len(),
+                bytes_disassembled = result.bytes_disassembled,
+                start_address = format_args!("0x{:X}", result.start_address),
+                "🔍 Remote disassembly results:"
+            );
+
+            for instruction in result.instructions {
+                let marker = if instruction.address == address {
+                    " <-- BREAKPOINT"
+                } else {
+                    ""
+                };
+                
+                info!("    {}{}", instruction, marker);
+            }
+        }
+        Err(e) => {
+            warn!(
+                address = format_args!("0x{:X}", address),
+                error = %e,
+                "Failed to disassemble memory via remote interface"
+            );
+        }
+    }
+}
+
 async fn handle_breakpoint_instruction(
     debugger: &mut AsyncDebugClient, 
     process_id: ProcessId, 
@@ -77,6 +126,9 @@ async fn handle_breakpoint_instruction(
             symbol_info
         );
     }
+    
+    // Disassemble memory around the breakpoint for analysis
+    disassemble_around_address(debugger, process_id, address, arch, &symbol_info).await;
     
     // Read memory at breakpoint address to verify it's a breakpoint instruction
     match debugger.read_process_memory(process_id, address, bp_instruction.len()).await {

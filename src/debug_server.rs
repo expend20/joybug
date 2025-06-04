@@ -15,6 +15,8 @@ use crate::debugger_interface::{
     Debugger, DebugEvent, ContinueDecision, LaunchedProcessInfo
 };
 use crate::windows::WindowsDebugger;
+use crate::arch::Architecture;
+use crate::disassembler::{DisassemblerFactory, DisassemblyResult};
 
 // Data structures for API
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,6 +59,20 @@ pub struct WriteMemoryRequest {
     pub process_id: u32,
     pub address: String, // hex string like "0x12345678"
     pub data: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DisassembleRequest {
+    pub process_id: u32,
+    pub address: String, // hex string like "0x12345678"
+    pub size: usize,
+    pub max_instructions: Option<usize>,
+    pub architecture: Option<Architecture>, // None for auto-detect from current system
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DisassembleResponse {
+    pub result: DisassemblyResult,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -372,6 +388,94 @@ async fn write_memory(
     }
 }
 
+async fn disassemble_memory(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<DisassembleRequest>,
+) -> Result<Json<DisassembleResponse>, (StatusCode, Json<ErrorResponse>)> {
+    debug!("Disassemble memory request for session {}: {:?}", session_id, request);
+    
+    // Parse address from hex string
+    let address = if request.address.starts_with("0x") || request.address.starts_with("0X") {
+        usize::from_str_radix(&request.address[2..], 16)
+    } else {
+        request.address.parse::<usize>()
+    };
+    
+    let address = match address {
+        Ok(addr) => addr,
+        Err(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid address format".to_string(),
+                }),
+            ));
+        }
+    };
+
+    // Get the architecture to use
+    let arch = request.architecture.unwrap_or_else(Architecture::current);
+
+    // Create disassembler
+    let disassembler = match DisassemblerFactory::create(arch) {
+        Ok(dis) => dis,
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to create disassembler: {}", e),
+                }),
+            ));
+        }
+    };
+
+    // Read memory from the debugged process
+    let sessions = state.sessions.lock().unwrap();
+    let session = match sessions.get(&session_id) {
+        Some(s) => s,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Session not found".to_string(),
+                }),
+            ));
+        }
+    };
+
+    let memory_data = match session.debugger.read_process_memory(request.process_id, address, request.size) {
+        Ok(data) => data,
+        Err(e) => {
+            error!("Failed to read memory for disassembly in session {}: {}", session_id, e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to read memory: {}", e),
+                }),
+            ));
+        }
+    };
+
+    // Disassemble the memory
+    match disassembler.disassemble(&memory_data, address, request.max_instructions) {
+        Ok(result) => {
+            debug!("Disassembled {} instructions starting at 0x{:X} in session {}", 
+                   result.instructions.len(), address, session_id);
+            Ok(Json(DisassembleResponse { result }))
+        }
+        Err(e) => {
+            error!("Failed to disassemble memory in session {}: {}", session_id, e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to disassemble memory: {}", e),
+                }),
+            ))
+        }
+    }
+}
+
 async fn list_sessions(
     State(state): State<AppState>,
 ) -> Json<Vec<String>> {
@@ -390,6 +494,7 @@ pub fn create_router() -> Router {
         .route("/sessions/:session_id/detach", post(detach_debugger))
         .route("/sessions/:session_id/read_memory", post(read_memory))
         .route("/sessions/:session_id/write_memory", post(write_memory))
+        .route("/sessions/:session_id/disassemble", post(disassemble_memory))
         .route("/sessions", get(list_sessions))
         .with_state(state)
 }
