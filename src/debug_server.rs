@@ -118,6 +118,11 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PingResponse {
+    pub status: String,
+}
+
 // Session management
 struct DebugSession {
     debugger: Box<dyn Debugger>,
@@ -589,10 +594,17 @@ async fn resolve_rva(
     }
 }
 
+async fn ping_handler() -> Json<PingResponse> {
+    Json(PingResponse {
+        status: "ok".to_string(),
+    })
+}
+
 pub fn create_router() -> Router {
     let state = AppState::new();
 
     Router::new()
+        .route("/ping", get(ping_handler))
         .route("/launch", post(launch_process))
         .route("/sessions", get(list_sessions))
         .route("/sessions/:session_id/wait_event", get(wait_for_event))
