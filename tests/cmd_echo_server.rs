@@ -453,6 +453,15 @@ async fn test_debugger_server_interface() {
 
     // Create a debug client
     let mut debugger = AsyncDebugClient::new(server_url);
+
+    // Ping the server to ensure it's up
+    info!("Pinging server to ensure it is available...");
+    if let Err(e) = debugger.ping().await {
+        error!(error = %e, "Failed to ping debug server");
+        panic!("Failed to ping debug server: {}", e);
+    }
+    info!("✓ Server ping successful.");
+
     let command_to_run = "cmd.exe /c echo Hello, World! I\'m a cmd.exe process";
 
     info!(command = command_to_run, "Attempting to launch process via debug server");

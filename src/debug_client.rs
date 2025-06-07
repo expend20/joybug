@@ -8,7 +8,7 @@ use crate::debugger_interface::{
 use crate::debug_server::{
     LaunchRequest, LaunchResponse, WaitForEventResponse, ContinueEventRequest,
     ReadMemoryRequest, ReadMemoryResponse, WriteMemoryRequest, ContinueDecisionRequest,
-    DisassembleRequest, DisassembleResponse, LoadSymbolsRequest, ResolveRvaRequest, ResolveRvaResponse
+    DisassembleRequest, DisassembleResponse, LoadSymbolsRequest, ResolveRvaRequest, ResolveRvaResponse, PingResponse
 };
 use crate::arch::Architecture;
 use crate::disassembler::DisassemblyResult;
@@ -51,6 +51,42 @@ impl AsyncDebugClient {
             client: Client::new(),
             base_url,
             session_id: None,
+        }
+    }
+
+    pub async fn ping(&self) -> Result<(), DebuggerError> {
+        debug!("Pinging debug server");
+
+        let response = self.client
+            .get(format!("{}/ping", self.base_url))
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Failed to send ping request: {}", e);
+                DebuggerError::Other(format!("Network error during ping: {e}"))
+            })?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            error!("Ping request failed with status {}: {}", status, error_text);
+            return Err(DebuggerError::Other(format!(
+                "Server returned non-success status for ping {status}: {error_text}"
+            )));
+        }
+
+        let ping_response: PingResponse = response.json().await.map_err(|e| {
+            error!("Failed to parse ping response: {}", e);
+            DebuggerError::Other(format!("Failed to parse ping response: {e}"))
+        })?;
+
+        if ping_response.status == "ok" {
+            debug!("Server ping successful.");
+            Ok(())
+        } else {
+            let err_msg = format!("Ping response status was not 'ok': {}", ping_response.status);
+            error!("{}", err_msg);
+            Err(DebuggerError::Other(err_msg))
         }
     }
 
