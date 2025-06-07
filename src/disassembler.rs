@@ -139,7 +139,7 @@ impl CapstoneDisassembler {
                     .detail(true)
                     .build()
                     .map_err(|e| DisassemblyError::InitializationFailed(
-                        format!("Failed to create x64 engine: {}", e)
+                        format!("Failed to create x64 engine: {e}")
                     ))?
             }
             Architecture::Arm64 => {
@@ -149,7 +149,7 @@ impl CapstoneDisassembler {
                     .detail(true)
                     .build()
                     .map_err(|e| DisassemblyError::InitializationFailed(
-                        format!("Failed to create arm64 engine: {}", e)
+                        format!("Failed to create arm64 engine: {e}")
                     ))?
             }
         };
@@ -184,7 +184,7 @@ impl Disassembler for CapstoneDisassembler {
 
         let instructions = self.engine
             .disasm_count(bytes, address as u64, 1)
-            .map_err(|e| DisassemblyError::EngineError(format!("Disassembly failed: {}", e)))?;
+            .map_err(|e| DisassemblyError::EngineError(format!("Disassembly failed: {e}")))?;
 
         if instructions.is_empty() {
             return Err(DisassemblyError::InvalidInstruction {
@@ -218,12 +218,12 @@ impl Disassembler for CapstoneDisassembler {
             Some(count) if count > 0 => {
                 self.engine
                     .disasm_count(bytes, start_address as u64, count)
-                    .map_err(|e| DisassemblyError::EngineError(format!("Disassembly failed: {}", e)))?
+                    .map_err(|e| DisassemblyError::EngineError(format!("Disassembly failed: {e}")))?
             }
             _ => {
                 self.engine
                     .disasm_all(bytes, start_address as u64)
-                    .map_err(|e| DisassemblyError::EngineError(format!("Disassembly failed: {}", e)))?
+                    .map_err(|e| DisassemblyError::EngineError(format!("Disassembly failed: {e}")))?
             }
         };
 
@@ -293,7 +293,7 @@ fn serialize_address<S>(addr: &Address, serializer: S) -> Result<S::Ok, S::Error
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&format!("0x{:X}", addr))
+    serializer.serialize_str(&format!("0x{addr:X}"))
 }
 
 fn deserialize_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
@@ -311,7 +311,7 @@ where
 impl fmt::Display for DisassemblyInstruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bytes_str: String = self.bytes.iter()
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<Vec<_>>()
             .join(" ");
         
