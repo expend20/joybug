@@ -33,7 +33,7 @@ impl PdbIdentifier {
     pub fn to_symsrv_identifier(&self) -> String {
         // Format: GUID (uppercase hex, no dashes) followed by Age (uppercase hex)
         // Example: AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPP1
-        let guid_no_dashes = self.guid.as_bytes().iter().map(|b| format!("{:02X}", b)).collect::<String>();
+        let guid_no_dashes = self.guid.as_bytes().iter().map(|b| format!("{b:02X}")).collect::<String>();
         format!("{}{:X}", guid_no_dashes, self.age)
     }
 }
@@ -152,7 +152,7 @@ impl WindowsSymbolProvider {
                 Ok(path_buf)
             }
             Err(e) => {
-                let err_msg = format!("SymSrv operation for PDB '{}' (ID: '{}') failed: {}", pdb_filename, identifier, e);
+                let err_msg = format!("SymSrv operation for PDB '{pdb_filename}' (ID: '{identifier}') failed: {e}");
                 error!(error = err_msg, "Failed to fetch PDB");
                 Err(SymbolError::SymSrvError(err_msg))
             }
@@ -233,7 +233,7 @@ impl SymbolProvider for WindowsSymbolProvider {
         let module_path_obj = Path::new(module_path_str);
         if !module_path_obj.exists() {
             error!(module_path = module_path_str, "Module file not found.");
-            return Err(SymbolError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, format!("Module file not found: {}", module_path_str))));
+            return Err(SymbolError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, format!("Module file not found: {module_path_str}"))));
         }
 
         // 1. Extract PDB identifier from the PE file
@@ -307,11 +307,10 @@ impl SymbolProvider for WindowsSymbolProvider {
             Some((_base, _size, symbols)) => {
                 let mut best_match: Option<Symbol> = None;
                 for symbol_entry in symbols {
-                    if symbol_entry.rva <= rva {
-                        if best_match.is_none() || symbol_entry.rva > best_match.as_ref().unwrap().rva {
+                    if symbol_entry.rva <= rva
+                        && (best_match.is_none() || symbol_entry.rva > best_match.as_ref().unwrap().rva) {
                             best_match = Some(symbol_entry.clone());
                         }
-                    }
                 }
                 if let Some(ref found_symbol) = best_match {
                     info!(module_path, rva = format!("0x{:X}", rva), symbol_name = %found_symbol.name, symbol_rva = format!("0x{:X}", found_symbol.rva), "RVA resolved.");

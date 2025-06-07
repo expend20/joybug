@@ -18,7 +18,7 @@ use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 /// * `Some(String)` - The file path if successful
 /// * `None` - If the handle is invalid or the operation fails
 pub fn get_path_from_handle(file_handle: HANDLE) -> Option<String> {
-    if file_handle == INVALID_HANDLE_VALUE as HANDLE || file_handle.is_null() {
+    if std::ptr::eq(file_handle, INVALID_HANDLE_VALUE) || file_handle.is_null() {
         warn!("Invalid file handle provided to get_path_from_handle");
         return None;
     }
@@ -88,7 +88,7 @@ pub fn get_path_from_handle(file_handle: HANDLE) -> Option<String> {
 /// * `Some(usize)` - The module size in bytes if successful
 /// * `None` - If the operation fails
 pub fn get_module_size_from_address(process_handle: HANDLE, module_base: usize) -> Option<usize> {
-    if process_handle.is_null() || process_handle == INVALID_HANDLE_VALUE as HANDLE {
+    if process_handle.is_null() || std::ptr::eq(process_handle, INVALID_HANDLE_VALUE) {
         warn!("Invalid process handle provided to get_module_size_from_address");
         return None;
     }

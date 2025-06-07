@@ -3,8 +3,6 @@ use joybug::debug_client::AsyncDebugClient;
 use joybug::debug_server;
 use joybug::logging;
 use joybug::arch::Architecture;
-use joybug::debugger_interface::SymbolProvider;
-use joybug::windows::windows_symbol_provider::WindowsSymbolProvider;
 use tracing::{info, error, warn, debug, trace};
 use std::time::Duration;
 use std::collections::HashMap;
@@ -63,7 +61,6 @@ async fn handle_breakpoint_instruction(
     process_id: ProcessId, 
     address: Address, 
     arch: &Architecture,
-    symbol_provider: &WindowsSymbolProvider,
     loaded_modules: &HashMap<String, (Address, Option<usize>)>
 ) {
     let bp_instruction = arch.breakpoint_instruction();
@@ -86,8 +83,8 @@ async fn handle_breakpoint_instruction(
                     "Breakpoint address belongs to module"
                 );
                 
-                // Try to resolve symbol
-                match symbol_provider.resolve_rva_to_symbol(module_name, rva).await {
+                // Try to resolve symbol via server
+                match debugger.resolve_rva_to_symbol(process_id, module_name, rva).await {
                     Ok(Some(symbol)) => {
                         if symbol.rva == rva {
                             symbol_info = format!("{}!{}", module_name, symbol.name);
@@ -103,7 +100,7 @@ async fn handle_breakpoint_instruction(
                         warn!(
                             module = module_name,
                             error = %e,
-                            "Failed to resolve symbol for RVA"
+                            "Failed to resolve symbol for RVA via server"
                         );
                         symbol_info = format!("{}!<symbol resolution failed>", module_name);
                     }
@@ -185,15 +182,6 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
     let mut loaded_dlls: Vec<String> = Vec::new();
     let mut loaded_modules: HashMap<String, (Address, Option<usize>)> = HashMap::new();
     
-    // Create symbol provider
-    let mut symbol_provider = match WindowsSymbolProvider::new() {
-        Ok(provider) => provider,
-        Err(e) => {
-            warn!(error = %e, "Failed to create WindowsSymbolProvider, symbol resolution will be disabled");
-            WindowsSymbolProvider::new().unwrap_or_else(|_| panic!("Cannot create fallback symbol provider"))
-        }
-    };
-
     loop {
         match debugger.wait_for_event().await {
             Ok(event) => {
@@ -226,7 +214,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                         // Get current architecture
                         let arch = Architecture::current();
                         
-                        handle_breakpoint_instruction(debugger, process_id, address, &arch, &symbol_provider, &loaded_modules).await;
+                        handle_breakpoint_instruction(debugger, process_id, address, &arch, &loaded_modules).await;
                         
                         continue_decision = ContinueDecision::HandledException;
                     }
@@ -245,17 +233,17 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                         if let Some(image_name) = image_file_name {
                             loaded_modules.insert(image_name.clone(), (base_of_image, size_of_image));
                             
-                            // Try to load symbols for the main process
-                            if let Err(e) = symbol_provider.load_symbols_for_module(image_name, base_of_image, size_of_image).await {
+                            // Try to load symbols for the main process via server
+                            if let Err(e) = debugger.load_symbols_for_module(process_id, image_name, base_of_image, size_of_image).await {
                                 debug!(
                                     module = image_name,
                                     error = %e,
-                                    "Failed to load symbols for main process module"
+                                    "Failed to load symbols for main process module via server"
                                 );
                             } else {
                                 info!(
                                     module = image_name,
-                                    "✓ Symbols loaded successfully for main process module"
+                                    "✓ Symbols loaded successfully for main process module via server"
                                 );
                             }
                         }
@@ -319,17 +307,17 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                         // Track loaded modules
                         loaded_modules.insert(dll_name_str.to_string(), (base_of_dll, size_of_dll));
                         
-                        // Try to load symbols for this module
-                        if let Err(e) = symbol_provider.load_symbols_for_module(dll_name_str, base_of_dll, size_of_dll).await {
+                        // Try to load symbols for this module via server
+                        if let Err(e) = debugger.load_symbols_for_module(process_id, dll_name_str, base_of_dll, size_of_dll).await {
                             debug!(
                                 module = dll_name_str,
                                 error = %e,
-                                "Failed to load symbols for module (this is often expected for system DLLs)"
+                                "Failed to load symbols for module via server (this is often expected for system DLLs)"
                             );
                         } else {
                             info!(
                                 module = dll_name_str,
-                                "✓ Symbols loaded successfully for module"
+                                "✓ Symbols loaded successfully for module via server"
                             );
                         }
 

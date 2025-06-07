@@ -43,6 +43,12 @@ pub struct WindowsDebugger {
     // if we decide not to close them immediately in CREATE_PROCESS_DEBUG_EVENT or LOAD_DLL_DEBUG_EVENT.
 }
 
+impl Default for WindowsDebugger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WindowsDebugger {
     pub fn new() -> Self {
         WindowsDebugger {
@@ -88,8 +94,7 @@ impl Debugger for WindowsDebugger {
         if success == FALSE {
             let error = unsafe { GetLastError() };
             return Err(DebuggerError::ProcessLaunchFailed(format!(
-                "CreateProcessW failed with error: {}",
-                error
+                "CreateProcessW failed with error: {error}"
             )));
         }
 
@@ -107,8 +112,7 @@ impl Debugger for WindowsDebugger {
         if unsafe { WaitForDebugEvent(&mut debug_event_raw, INFINITE) } == FALSE {
             let error = unsafe { GetLastError() };
             return Err(DebuggerError::WaitForEventFailed(format!(
-                "WaitForDebugEvent failed: {}",
-                error
+                "WaitForDebugEvent failed: {error}"
             )));
         }
 
@@ -149,7 +153,7 @@ impl Debugger for WindowsDebugger {
                 let image_size = get_module_size_from_address(info.hProcess, info.lpBaseOfImage as usize);
                 
                 // The hFile in CreateProcessInfo should be closed.
-                if !info.hFile.is_null() && info.hFile != ptr::null_mut() {
+                if !info.hFile.is_null() && info.hFile.is_null() {
                     unsafe { CloseHandle(info.hFile) };
                 }
 
@@ -194,7 +198,7 @@ impl Debugger for WindowsDebugger {
                 let dll_size = get_module_size_from_address(process_handle, info.lpBaseOfDll as usize);
                 
                 // The hFile in LoadDllInfo should be closed.
-                if !info.hFile.is_null() && info.hFile != ptr::null_mut() {
+                if !info.hFile.is_null() && info.hFile.is_null() {
                     unsafe { CloseHandle(info.hFile) };
                 }
                 Ok(DebugEvent::DllLoaded {
@@ -258,8 +262,7 @@ impl Debugger for WindowsDebugger {
         {
             let error = unsafe { GetLastError() };
             Err(DebuggerError::ContinueEventFailed(format!(
-                "ContinueDebugEvent failed: {}",
-                error
+                "ContinueDebugEvent failed: {error}"
             )))
         } else {
             Ok(())
@@ -273,10 +276,10 @@ impl Debugger for WindowsDebugger {
             // DebugActiveProcessStop(pi.dwProcessId); // Needs DebugActiveProcessStop feature
 
             // Close main process and thread handles obtained from CreateProcessW
-            if !pi.hProcess.is_null() && pi.hProcess != ptr::null_mut(){
+            if !pi.hProcess.is_null() && pi.hProcess.is_null(){
                 unsafe { CloseHandle(pi.hProcess) };
             }
-            if !pi.hThread.is_null() && pi.hThread != ptr::null_mut() {
+            if !pi.hThread.is_null() && pi.hThread.is_null() {
                 unsafe { CloseHandle(pi.hThread) };
             }
         }
@@ -315,13 +318,11 @@ impl Debugger for WindowsDebugger {
         if success == FALSE {
             let error = unsafe { GetLastError() };
             Err(DebuggerError::ReadProcessMemoryFailed(format!(
-                "ReadProcessMemory failed with error: {}. Tried to read {} bytes from address 0x{:X}",
-                error, size, address
+                "ReadProcessMemory failed with error: {error}. Tried to read {size} bytes from address 0x{address:X}"
             )))
         } else if bytes_read != size {
             Err(DebuggerError::ReadProcessMemoryFailed(format!(
-                "ReadProcessMemory read {} bytes, expected {}",
-                bytes_read, size
+                "ReadProcessMemory read {bytes_read} bytes, expected {size}"
             )))
         } else {
             Ok(buffer)

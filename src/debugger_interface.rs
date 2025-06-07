@@ -90,7 +90,7 @@ fn serialize_address<S>(addr: &Address, serializer: S) -> Result<S::Ok, S::Error
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&format!("0x{:X}", addr))
+    serializer.serialize_str(&format!("0x{addr:X}"))
 }
 
 fn deserialize_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
@@ -113,28 +113,28 @@ impl std::fmt::Debug for DebugEvent {
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
                 .field("image_file_name", image_file_name)
-                .field("base_of_image", &format_args!("0x{:X}", base_of_image))
-                .field("size_of_image", &size_of_image.map(|s| format!("0x{:X}", s)))
+                .field("base_of_image", &format_args!("0x{base_of_image:X}"))
+                .field("size_of_image", &size_of_image.map(|s| format!("0x{s:X}")))
                 .finish(),
             DebugEvent::ThreadCreated { process_id, thread_id, start_address } => f
                 .debug_struct("ThreadCreated")
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
-                .field("start_address", &format_args!("0x{:X}", start_address))
+                .field("start_address", &format_args!("0x{start_address:X}"))
                 .finish(),
             DebugEvent::ExceptionOccurred { process_id, thread_id, exception_code, exception_address, is_first_chance } => f
                 .debug_struct("ExceptionOccurred")
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
-                .field("exception_code", &format_args!("0x{:08X}", exception_code))
-                .field("exception_address", &format_args!("0x{:X}", exception_address))
+                .field("exception_code", &format_args!("0x{exception_code:08X}"))
+                .field("exception_address", &format_args!("0x{exception_address:X}"))
                 .field("is_first_chance", is_first_chance)
                 .finish(),
             DebugEvent::BreakpointHit { process_id, thread_id, address } => f
                 .debug_struct("BreakpointHit")
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
-                .field("address", &format_args!("0x{:X}", address))
+                .field("address", &format_args!("0x{address:X}"))
                 .finish(),
             DebugEvent::OutputDebugString { process_id, thread_id, message } => f
                 .debug_struct("OutputDebugString")
@@ -147,14 +147,14 @@ impl std::fmt::Debug for DebugEvent {
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
                 .field("dll_name", dll_name)
-                .field("base_of_dll", &format_args!("0x{:X}", base_of_dll))
-                .field("size_of_dll", &size_of_dll.map(|s| format!("0x{:X}", s)))
+                .field("base_of_dll", &format_args!("0x{base_of_dll:X}"))
+                .field("size_of_dll", &size_of_dll.map(|s| format!("0x{s:X}")))
                 .finish(),
             DebugEvent::DllUnloaded { process_id, thread_id, base_of_dll } => f
                 .debug_struct("DllUnloaded")
                 .field("process_id", process_id)
                 .field("thread_id", thread_id)
-                .field("base_of_dll", &format_args!("0x{:X}", base_of_dll))
+                .field("base_of_dll", &format_args!("0x{base_of_dll:X}"))
                 .finish(),
             DebugEvent::ThreadExited { process_id, thread_id, exit_code } => f
                 .debug_struct("ThreadExited")
@@ -202,12 +202,12 @@ pub enum DebuggerError {
 impl std::fmt::Display for DebuggerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DebuggerError::ProcessLaunchFailed(s) => write!(f, "Process launch failed: {}", s),
-            DebuggerError::WaitForEventFailed(s) => write!(f, "Wait for event failed: {}", s),
-            DebuggerError::ContinueEventFailed(s) => write!(f, "Continue event failed: {}", s),
-            DebuggerError::ReadProcessMemoryFailed(s) => write!(f, "Read process memory failed: {}", s),
-            DebuggerError::WriteProcessMemoryFailed(s) => write!(f, "Write process memory failed: {}", s),
-            DebuggerError::Other(s) => write!(f, "Debugger error: {}", s),
+            DebuggerError::ProcessLaunchFailed(s) => write!(f, "Process launch failed: {s}"),
+            DebuggerError::WaitForEventFailed(s) => write!(f, "Wait for event failed: {s}"),
+            DebuggerError::ContinueEventFailed(s) => write!(f, "Continue event failed: {s}"),
+            DebuggerError::ReadProcessMemoryFailed(s) => write!(f, "Read process memory failed: {s}"),
+            DebuggerError::WriteProcessMemoryFailed(s) => write!(f, "Write process memory failed: {s}"),
+            DebuggerError::Other(s) => write!(f, "Debugger error: {s}"),
         }
     }
 }
@@ -235,15 +235,15 @@ impl std::fmt::Display for SymbolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SymbolError::ProviderNotInitialized => write!(f, "Symbol provider not initialized"),
-            SymbolError::ModuleNotLoaded(module) => write!(f, "Module not loaded: {}", module),
-            SymbolError::SymbolsNotFound(module) => write!(f, "Symbols not found for module: {}", module),
-            SymbolError::SymbolResolutionFailed(symbol) => write!(f, "Failed to resolve symbol: {}", symbol),
-            SymbolError::PdbNotFound(pdb) => write!(f, "PDB file not found: {}", pdb),
-            SymbolError::PdbParsingFailed(pdb) => write!(f, "Failed to parse PDB file: {}", pdb),
-            SymbolError::PeParsingFailed(file) => write!(f, "Failed to parse PE file: {}", file),
-            SymbolError::SymSrvError(s) => write!(f, "Symbol server error: {}", s),
-            SymbolError::IoError(e) => write!(f, "I/O error during symbol operation: {}", e),
-            SymbolError::Other(s) => write!(f, "Symbol error: {}", s),
+            SymbolError::ModuleNotLoaded(module) => write!(f, "Module not loaded: {module}"),
+            SymbolError::SymbolsNotFound(module) => write!(f, "Symbols not found for module: {module}"),
+            SymbolError::SymbolResolutionFailed(symbol) => write!(f, "Failed to resolve symbol: {symbol}"),
+            SymbolError::PdbNotFound(pdb) => write!(f, "PDB file not found: {pdb}"),
+            SymbolError::PdbParsingFailed(pdb) => write!(f, "Failed to parse PDB file: {pdb}"),
+            SymbolError::PeParsingFailed(file) => write!(f, "Failed to parse PE file: {file}"),
+            SymbolError::SymSrvError(s) => write!(f, "Symbol server error: {s}"),
+            SymbolError::IoError(e) => write!(f, "I/O error during symbol operation: {e}"),
+            SymbolError::Other(s) => write!(f, "Symbol error: {s}"),
         }
     }
 }
