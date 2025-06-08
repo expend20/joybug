@@ -54,6 +54,10 @@ impl AsyncDebugClient {
         }
     }
 
+    pub fn get_session_id(&self) -> Option<&String> {
+        self.session_id.as_ref()
+    }
+
     pub async fn ping(&self) -> Result<(), DebuggerError> {
         debug!("Pinging debug server");
 
@@ -123,7 +127,6 @@ impl AsyncDebugClient {
 
         self.session_id = Some(launch_response.session_id.clone());
         info!("Process launched successfully, session: {}", launch_response.session_id);
-
         Ok(launch_response.process_info)
     }
 
