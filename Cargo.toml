@@ -25,7 +25,7 @@ serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
-reqwest = { version = "0.11", features = ["json"] } 
+reqwest = { version = "0.11", features = ["json", "blocking"] } 
 # windows symbols
 pelite = "0.10.0"
 thiserror = "1.0"
@@ -35,3 +35,7 @@ pdb = "0.8"
 async-trait = "0.1"
 # disassembly
 capstone = "0.12"
+
+[[test]]
+name = "sessions"
+path = "tests/sessions/mod.rs"

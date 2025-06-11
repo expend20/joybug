@@ -1,5 +1,6 @@
 use crate::debugger_interface::*;
 use super::utils::{get_path_from_handle, get_module_size_from_address};
+use tracing::debug;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
@@ -10,11 +11,11 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
     ContinueDebugEvent, DEBUG_EVENT, EXCEPTION_DEBUG_EVENT,
     EXIT_PROCESS_DEBUG_EVENT, CREATE_PROCESS_DEBUG_EVENT, WaitForDebugEvent, OUTPUT_DEBUG_STRING_EVENT,
     CREATE_THREAD_DEBUG_EVENT, EXIT_THREAD_DEBUG_EVENT, LOAD_DLL_DEBUG_EVENT, UNLOAD_DLL_DEBUG_EVENT,
-    RIP_EVENT,
+    RIP_EVENT, DebugActiveProcessStop,
 };
 #[allow(unused_imports)] use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows_sys::Win32::System::Threading::{
-    PROCESS_INFORMATION, STARTUPINFOW, CreateProcessW, DEBUG_PROCESS, INFINITE,
+    PROCESS_INFORMATION, STARTUPINFOW, CreateProcessW, DEBUG_PROCESS, INFINITE, TerminateProcess
 };
 
 #[allow(dead_code)] // Allow dead code for this function
@@ -100,6 +101,8 @@ impl Debugger for WindowsDebugger {
 
         self.process_info = Some(process_info_raw);
 
+        debug!("Process created");
+
         Ok(LaunchedProcessInfo {
             process_id: process_info_raw.dwProcessId,
             thread_id: process_info_raw.dwThreadId,
@@ -108,6 +111,8 @@ impl Debugger for WindowsDebugger {
 
     #[allow(unused_variables)] // For process_handle
     fn wait_for_event(&mut self) -> Result<DebugEvent, DebuggerError> {
+
+        debug!("Waiting for event");
         let mut debug_event_raw: DEBUG_EVENT = unsafe { std::mem::zeroed() };
         if unsafe { WaitForDebugEvent(&mut debug_event_raw, INFINITE) } == FALSE {
             let error = unsafe { GetLastError() };
@@ -115,6 +120,7 @@ impl Debugger for WindowsDebugger {
                 "WaitForDebugEvent failed: {error}"
             )));
         }
+        debug!("Event received {:?}", debug_event_raw.dwDebugEventCode);
 
         let current_pid = debug_event_raw.dwProcessId;
         let current_tid = debug_event_raw.dwThreadId;
@@ -271,9 +277,7 @@ impl Debugger for WindowsDebugger {
 
     fn detach(&mut self) -> Result<(), DebuggerError> {
         if let Some(pi) = self.process_info.take() { // take() to consume and invalidate
-            // We should also detach from debugging if possible, though for DEBUG_PROCESS created processes,
-            // termination of the debugger often terminates the debuggee unless specifically detached earlier.
-            // DebugActiveProcessStop(pi.dwProcessId); // Needs DebugActiveProcessStop feature
+            unsafe { DebugActiveProcessStop(pi.dwProcessId) };
 
             // Close main process and thread handles obtained from CreateProcessW
             if !pi.hProcess.is_null() && pi.hProcess.is_null(){
@@ -368,6 +372,32 @@ impl Debugger for WindowsDebugger {
                 bytes_written, data.len()
             )))
         } else {
+            Ok(())
+        }
+    }
+
+    fn terminate(&mut self, _process_id: ProcessId, exit_code: u32) -> Result<(), DebuggerError> {
+        let process_handle = match self.process_info {
+            Some(ref pi) => pi.hProcess,
+            None => return Err(DebuggerError::Other("Process not launched or already detached".to_string())),
+        };
+
+        if process_handle.is_null() || process_handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            return Err(DebuggerError::Other("Invalid process handle".to_string()));
+        }
+
+        let success = unsafe {
+            TerminateProcess(process_handle, exit_code)
+        };
+
+        if success == FALSE {
+            let error = unsafe { GetLastError() };
+            Err(DebuggerError::ProcessTerminateFailed(format!(
+                "TerminateProcess failed with error: {error}"
+            )))
+        } else {
+            // Clear the process info since the process is now terminated
+            self.process_info = None;
             Ok(())
         }
     }
