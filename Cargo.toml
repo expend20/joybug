@@ -35,3 +35,7 @@ pdb = "0.8"
 async-trait = "0.1"
 # disassembly
 capstone = "0.12"
+
+[[test]]
+name = "sessions"
+path = "tests/sessions/mod.rs"

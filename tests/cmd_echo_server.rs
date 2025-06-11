@@ -1,6 +1,5 @@
 use joybug::debugger_interface::{DebugEvent, ContinueDecision, LaunchedProcessInfo, ProcessId, Address};
 use joybug::debug_client::DebugClient;
-use joybug::debug_server;
 use joybug::logging;
 use joybug::arch::Architecture;
 use tracing::{info, error, warn, debug, trace};
@@ -168,6 +167,42 @@ fn handle_breakpoint_instruction(
                 error = %e,
                 "Failed to read memory at breakpoint address"
             );
+        }
+    }
+}
+
+mod common;
+use common::start_debug_server;
+
+fn verify_debug_sessions(debugger: &mut DebugClient) {
+    // Query debug sessions after launching the process
+    info!("Querying debug sessions from server...");
+    match debugger.list_sessions() {
+        Ok(sessions) => {
+            info!(sessions = ?sessions, "Active debug sessions retrieved from server");
+            
+            // Assert that there is at least one session
+            assert!(!sessions.is_empty(), "Expected at least one active debug session after launching process");
+            
+            // Assert that our current session is in the list
+            if let Some(current_session_id) = debugger.get_session_id() {
+                assert!(
+                    sessions.contains(current_session_id),
+                    "Expected current session ID '{}' to be in the list of active sessions: {:?}",
+                    current_session_id,
+                    sessions
+                );
+                info!(
+                    session_id = current_session_id,
+                    "✓ Verified current session is listed in active sessions"
+                );
+            } else {
+                panic!("Expected debugger to have a session ID after successful launch");
+            }
+        }
+        Err(e) => {
+            error!(error = %e, "Failed to query debug sessions from server");
+            panic!("Failed to query debug sessions: {}", e);
         }
     }
 }
@@ -438,24 +473,7 @@ fn verify_dos_header_sync(debugger: &DebugClient, process_id: ProcessId, base_of
 fn test_debugger_server_interface() {
     logging::init_subscriber();
 
-    let server_port = 8888;
-    let server_url = format!("http://127.0.0.1:{}", server_port);
-
-    // Start the debug server in a background thread with single-threaded runtime
-    // NOTE: Multi-threaded runtime is leading to a weird bugs, it looks like Debug Loop
-    // is not working if CreateProcess and WaitForDebugEvent are called in different threads.
-    // ref: https://learn.microsoft.com/en-us/windows/win32/debug/writing-the-debugger-s-main-loop
-    let _server_handle = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            if let Err(e) = debug_server::run_server(server_port).await {
-                error!("Server error: {}", e);
-            }
-        });
-    });
+    let server_url = start_debug_server();
 
     // Create a debug client
     let mut debugger = DebugClient::new(server_url);
@@ -474,36 +492,7 @@ fn test_debugger_server_interface() {
 
     match debugger.launch(command_to_run) {
         Ok(process_info) => {
-            // Query debug sessions after launching the process
-            info!("Querying debug sessions from server...");
-            match debugger.list_sessions() {
-                Ok(sessions) => {
-                    info!(sessions = ?sessions, "Active debug sessions retrieved from server");
-                    
-                    // Assert that there is at least one session
-                    assert!(!sessions.is_empty(), "Expected at least one active debug session after launching process");
-                    
-                    // Assert that our current session is in the list
-                    if let Some(current_session_id) = debugger.get_session_id() {
-                        assert!(
-                            sessions.contains(current_session_id),
-                            "Expected current session ID '{}' to be in the list of active sessions: {:?}",
-                            current_session_id,
-                            sessions
-                        );
-                        info!(
-                            session_id = current_session_id,
-                            "✓ Verified current session is listed in active sessions"
-                        );
-                    } else {
-                        panic!("Expected debugger to have a session ID after successful launch");
-                    }
-                }
-                Err(e) => {
-                    error!(error = %e, "Failed to query debug sessions from server");
-                    panic!("Failed to query debug sessions: {}", e);
-                }
-            }
+            verify_debug_sessions(&mut debugger);
 
             let loaded_dlls = main_loop_sync(&mut debugger, process_info);
             

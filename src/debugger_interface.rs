@@ -196,6 +196,7 @@ pub enum DebuggerError {
     ContinueEventFailed(String),
     ReadProcessMemoryFailed(String),
     WriteProcessMemoryFailed(String),
+    ProcessTerminateFailed(String),
     Other(String),
 }
 
@@ -207,6 +208,7 @@ impl std::fmt::Display for DebuggerError {
             DebuggerError::ContinueEventFailed(s) => write!(f, "Continue event failed: {s}"),
             DebuggerError::ReadProcessMemoryFailed(s) => write!(f, "Read process memory failed: {s}"),
             DebuggerError::WriteProcessMemoryFailed(s) => write!(f, "Write process memory failed: {s}"),
+            DebuggerError::ProcessTerminateFailed(s) => write!(f, "Process terminate failed: {s}"),
             DebuggerError::Other(s) => write!(f, "Debugger error: {s}"),
         }
     }
@@ -342,6 +344,10 @@ pub trait Debugger {
         address: Address,
         data: &[u8],
     ) -> Result<(), DebuggerError>;
+
+    /// Terminates the debugged process.
+    /// Returns success or an error.
+    fn terminate(&mut self, process_id: ProcessId, exit_code: u32) -> Result<(), DebuggerError>;
 
     // Potentially other methods like:
     // fn set_breakpoint(&mut self, process_id: ProcessId, address: Address) -> Result<(), DebuggerError>;

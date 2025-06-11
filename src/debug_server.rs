@@ -63,6 +63,12 @@ pub struct WriteMemoryRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct TerminateRequest {
+    pub process_id: u32,
+    pub exit_code: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DisassembleRequest {
     pub process_id: u32,
     pub address: String, // hex string like "0x12345678"
@@ -430,6 +436,45 @@ async fn write_memory(
     }
 }
 
+#[axum::debug_handler]  
+async fn terminate_process(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<TerminateRequest>,
+) -> Result<Json<()>, (StatusCode, Json<ErrorResponse>)> {
+    debug!("Terminate process request for session {}: {:?}", session_id, request);
+    
+    let mut sessions = state.sessions.lock().await;
+    let mut session = match sessions.remove(&session_id) {
+        Some(s) => s,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Session not found".to_string(),
+                }),
+            ));
+        }
+    };
+
+    match session.debugger.terminate(request.process_id, request.exit_code) {
+        Ok(()) => {
+            debug!("Process terminated successfully for session {}", session_id);
+            Ok(Json(()))
+        }
+        Err(e) => {
+            error!("Failed to terminate process in session {}: {}", session_id, e);
+            // Even if termination fails, the session is removed.
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to terminate process: {e}"),
+                }),
+            ))
+        }
+    }
+}
+
 #[axum::debug_handler]
 async fn disassemble_memory(
     State(state): State<AppState>,
@@ -612,6 +657,7 @@ pub fn create_router() -> Router {
         .route("/sessions/:session_id/detach", post(detach_debugger))
         .route("/sessions/:session_id/read_memory", post(read_memory))
         .route("/sessions/:session_id/write_memory", post(write_memory))
+        .route("/sessions/:session_id/terminate", post(terminate_process))
         .route("/sessions/:session_id/disassemble", post(disassemble_memory))
         .route("/sessions/:session_id/load_symbols", post(load_symbols))
         .route("/sessions/:session_id/resolve_rva", post(resolve_rva))

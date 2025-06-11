@@ -7,7 +7,7 @@ use crate::debugger_interface::{
 };
 use crate::debug_server::{
     LaunchRequest, LaunchResponse, WaitForEventResponse, ContinueEventRequest,
-    ReadMemoryRequest, ReadMemoryResponse, WriteMemoryRequest, ContinueDecisionRequest,
+    ReadMemoryRequest, ReadMemoryResponse, WriteMemoryRequest, TerminateRequest, ContinueDecisionRequest,
     DisassembleRequest, DisassembleResponse, LoadSymbolsRequest, ResolveRvaRequest, ResolveRvaResponse, PingResponse
 };
 use crate::arch::Architecture;
@@ -453,6 +453,39 @@ impl Debugger for DebugClient {
         }
 
         debug!("Wrote {} bytes to memory", data.len());
+        Ok(())
+    }
+
+    fn terminate(&mut self, process_id: ProcessId, exit_code: u32) -> Result<(), DebuggerError> {
+        let session_id = self.session_id.as_ref()
+            .ok_or_else(|| DebuggerError::Other("No active session".to_string()))?;
+
+        let request = TerminateRequest {
+            process_id,
+            exit_code,
+        };
+
+        debug!("Sending terminate request: {:?}", request);
+
+        let response = self.client
+            .post(format!("{}/sessions/{}/terminate", self.base_url, session_id))
+            .json(&request)
+            .send()
+            .map_err(|e| {
+                error!("Failed to send terminate request: {}", e);
+                DebuggerError::ProcessTerminateFailed(format!("Network error: {e}"))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().unwrap_or_default();
+            error!("Terminate request failed with status {}: {}", status, error_text);
+            return Err(DebuggerError::ProcessTerminateFailed(format!(
+                "Server returned status {status}: {error_text}"
+            )));
+        }
+
+        debug!("Process terminated successfully");
         Ok(())
     }
 }
