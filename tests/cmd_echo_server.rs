@@ -1,14 +1,14 @@
 use joybug::debugger_interface::{DebugEvent, ContinueDecision, LaunchedProcessInfo, ProcessId, Address};
-use joybug::debug_client::AsyncDebugClient;
+use joybug::debug_client::DebugClient;
 use joybug::debug_server;
 use joybug::logging;
 use joybug::arch::Architecture;
 use tracing::{info, error, warn, debug, trace};
-use std::time::Duration;
 use std::collections::HashMap;
+use joybug::debugger_interface::Debugger;
 
-async fn disassemble_around_address(
-    debugger: &AsyncDebugClient,
+fn disassemble_around_address(
+    debugger: &DebugClient,
     process_id: ProcessId,
     address: Address,
     arch: &Architecture,
@@ -27,7 +27,7 @@ async fn disassemble_around_address(
     );
 
     // Use the remote disassembly API (limit to 10 instructions for readability)
-    match debugger.disassemble(process_id, start_address, memory_size, Some(10), Some(*arch)).await {
+    match debugger.disassemble(process_id, start_address, memory_size, Some(10), Some(*arch)) {
         Ok(result) => {
             info!(
                 instructions_found = result.instructions.len(),
@@ -56,8 +56,8 @@ async fn disassemble_around_address(
     }
 }
 
-async fn handle_breakpoint_instruction(
-    debugger: &mut AsyncDebugClient, 
+fn handle_breakpoint_instruction(
+    debugger: &mut DebugClient, 
     process_id: ProcessId, 
     address: Address, 
     arch: &Architecture,
@@ -84,7 +84,7 @@ async fn handle_breakpoint_instruction(
                 );
                 
                 // Try to resolve symbol via server
-                match debugger.resolve_rva_to_symbol(process_id, module_name, rva).await {
+                match debugger.resolve_rva_to_symbol(process_id, module_name, rva) {
                     Ok(Some(symbol)) => {
                         if symbol.rva == rva {
                             symbol_info = format!("{}!{}", module_name, symbol.name);
@@ -125,10 +125,10 @@ async fn handle_breakpoint_instruction(
     }
     
     // Disassemble memory around the breakpoint for analysis
-    disassemble_around_address(debugger, process_id, address, arch, &symbol_info).await;
+    disassemble_around_address(debugger, process_id, address, arch, &symbol_info);
     
     // Read memory at breakpoint address to verify it's a breakpoint instruction
-    match debugger.read_process_memory(process_id, address, bp_instruction.len()).await {
+    match debugger.read_process_memory(process_id, address, bp_instruction.len()) {
         Ok(memory_bytes) => {
             if arch.is_breakpoint(&memory_bytes) {
                 info!(
@@ -139,7 +139,7 @@ async fn handle_breakpoint_instruction(
                 );
                 
                 // Write nop instruction to replace the breakpoint
-                match debugger.write_process_memory(process_id, address, nop_instruction).await {
+                match debugger.write_process_memory(process_id, address, nop_instruction) {
                     Ok(()) => {
                         info!(
                             address = format_args!("0x{:X}", address),
@@ -172,7 +172,7 @@ async fn handle_breakpoint_instruction(
     }
 }
 
-async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: LaunchedProcessInfo) -> Vec<String> {
+fn main_loop_sync(debugger: &mut DebugClient, initial_process_info: LaunchedProcessInfo) -> Vec<String> {
     info!(
         pid = initial_process_info.process_id,
         tid = initial_process_info.thread_id,
@@ -183,7 +183,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
     let mut loaded_modules: HashMap<String, (Address, Option<usize>)> = HashMap::new();
     
     loop {
-        match debugger.wait_for_event().await {
+        match debugger.wait_for_event() {
             Ok(event) => {
                 debug!(?event, "Debug event received");
                 let mut continue_decision = ContinueDecision::Continue;
@@ -214,7 +214,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                         // Get current architecture
                         let arch = Architecture::current();
                         
-                        handle_breakpoint_instruction(debugger, process_id, address, &arch, &loaded_modules).await;
+                        handle_breakpoint_instruction(debugger, process_id, address, &arch, &loaded_modules);
                         
                         continue_decision = ContinueDecision::HandledException;
                     }
@@ -234,7 +234,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                             loaded_modules.insert(image_name.clone(), (base_of_image, size_of_image));
                             
                             // Try to load symbols for the main process via server
-                            if let Err(e) = debugger.load_symbols_for_module(process_id, image_name, base_of_image, size_of_image).await {
+                            if let Err(e) = debugger.load_symbols_for_module(process_id, image_name, base_of_image, size_of_image) {
                                 debug!(
                                     module = image_name,
                                     error = %e,
@@ -308,7 +308,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                         loaded_modules.insert(dll_name_str.to_string(), (base_of_dll, size_of_dll));
                         
                         // Try to load symbols for this module via server
-                        if let Err(e) = debugger.load_symbols_for_module(process_id, dll_name_str, base_of_dll, size_of_dll).await {
+                        if let Err(e) = debugger.load_symbols_for_module(process_id, dll_name_str, base_of_dll, size_of_dll) {
                             debug!(
                                 module = dll_name_str,
                                 error = %e,
@@ -324,7 +324,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                         // Track loaded DLLs
                         loaded_dlls.push(dll_name_str.to_string());
 
-                        verify_dos_header_async(debugger, process_id, base_of_dll).await;
+                        verify_dos_header_sync(debugger, process_id, base_of_dll);
                     }
                     DebugEvent::DllUnloaded { process_id, thread_id, base_of_dll } => {
                         info!(
@@ -379,7 +379,7 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
                     }
                 };
 
-                if let Err(e) = debugger.continue_event(pid_to_continue, tid_to_continue, continue_decision).await {
+                if let Err(e) = debugger.continue_event(pid_to_continue, tid_to_continue, continue_decision) {
                     error!(error = %e, "Failed to continue debuggee");
                     break;
                 }
@@ -394,13 +394,13 @@ async fn main_loop_async(debugger: &mut AsyncDebugClient, initial_process_info: 
     loaded_dlls
 }
 
-async fn verify_dos_header_async(debugger: &AsyncDebugClient, process_id: ProcessId, base_of_dll: Address) {
+fn verify_dos_header_sync(debugger: &DebugClient, process_id: ProcessId, base_of_dll: Address) {
     trace!(
         pid = process_id,
         dll_base = format_args!("0x{:X}", base_of_dll),
         "Verifying DOS header for loaded DLL."
     );
-    match debugger.read_process_memory(process_id, base_of_dll, 2).await {
+    match debugger.read_process_memory(process_id, base_of_dll, 2) {
         Ok(header_bytes) => {
             if header_bytes.len() == 2 && header_bytes[0] == b'M' && header_bytes[1] == b'Z' {
                 trace!(
@@ -434,29 +434,35 @@ async fn verify_dos_header_async(debugger: &AsyncDebugClient, process_id: Proces
     }
 }
 
-#[tokio::test]
-async fn test_debugger_server_interface() {
+#[test]
+fn test_debugger_server_interface() {
     logging::init_subscriber();
 
-    let server_port = 8080;
+    let server_port = 8888;
     let server_url = format!("http://127.0.0.1:{}", server_port);
 
-    // Start the debug server in a background task
-    let server_handle = tokio::spawn(async move {
-        if let Err(e) = debug_server::run_server(server_port).await {
-            error!("Server error: {}", e);
-        }
+    // Start the debug server in a background thread with single-threaded runtime
+    // NOTE: Multi-threaded runtime is leading to a weird bugs, it looks like Debug Loop
+    // is not working if CreateProcess and WaitForDebugEvent are called in different threads.
+    // ref: https://learn.microsoft.com/en-us/windows/win32/debug/writing-the-debugger-s-main-loop
+    let _server_handle = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            if let Err(e) = debug_server::run_server(server_port).await {
+                error!("Server error: {}", e);
+            }
+        });
     });
 
-    // Give the server a moment to start
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
     // Create a debug client
-    let mut debugger = AsyncDebugClient::new(server_url);
+    let mut debugger = DebugClient::new(server_url);
 
     // Ping the server to ensure it's up
     info!("Pinging server to ensure it is available...");
-    if let Err(e) = debugger.ping().await {
+    if let Err(e) = debugger.ping() {
         error!(error = %e, "Failed to ping debug server");
         panic!("Failed to ping debug server: {}", e);
     }
@@ -466,9 +472,40 @@ async fn test_debugger_server_interface() {
 
     info!(command = command_to_run, "Attempting to launch process via debug server");
 
-    match debugger.launch(command_to_run).await {
+    match debugger.launch(command_to_run) {
         Ok(process_info) => {
-            let loaded_dlls = main_loop_async(&mut debugger, process_info).await;
+            // Query debug sessions after launching the process
+            info!("Querying debug sessions from server...");
+            match debugger.list_sessions() {
+                Ok(sessions) => {
+                    info!(sessions = ?sessions, "Active debug sessions retrieved from server");
+                    
+                    // Assert that there is at least one session
+                    assert!(!sessions.is_empty(), "Expected at least one active debug session after launching process");
+                    
+                    // Assert that our current session is in the list
+                    if let Some(current_session_id) = debugger.get_session_id() {
+                        assert!(
+                            sessions.contains(current_session_id),
+                            "Expected current session ID '{}' to be in the list of active sessions: {:?}",
+                            current_session_id,
+                            sessions
+                        );
+                        info!(
+                            session_id = current_session_id,
+                            "✓ Verified current session is listed in active sessions"
+                        );
+                    } else {
+                        panic!("Expected debugger to have a session ID after successful launch");
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to query debug sessions from server");
+                    panic!("Failed to query debug sessions: {}", e);
+                }
+            }
+
+            let loaded_dlls = main_loop_sync(&mut debugger, process_info);
             
             info!(dlls = ?loaded_dlls, "Loaded DLLs during execution");
             
@@ -493,13 +530,11 @@ async fn test_debugger_server_interface() {
     }
     
     info!("Cleaning up debugger client.");
-    if let Err(e) = debugger.detach().await {
+    if let Err(e) = debugger.detach() {
         error!(error = %e, "Error detaching debugger client");
     }
 
     info!("Debug server interface test finished.");
     
-    // Note: In a real scenario, you might want to gracefully shutdown the server
-    // For this test, we just abort the server task
-    server_handle.abort();
+    // Note: The server thread will be terminated when the test ends
 } 

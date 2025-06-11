@@ -1,5 +1,6 @@
 use crate::debugger_interface::*;
 use super::utils::{get_path_from_handle, get_module_size_from_address};
+use tracing::debug;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr;
@@ -14,7 +15,7 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 };
 #[allow(unused_imports)] use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows_sys::Win32::System::Threading::{
-    PROCESS_INFORMATION, STARTUPINFOW, CreateProcessW, DEBUG_PROCESS, INFINITE,
+    PROCESS_INFORMATION, STARTUPINFOW, CreateProcessW, DEBUG_PROCESS, INFINITE
 };
 
 #[allow(dead_code)] // Allow dead code for this function
@@ -100,6 +101,8 @@ impl Debugger for WindowsDebugger {
 
         self.process_info = Some(process_info_raw);
 
+        debug!("Process created");
+
         Ok(LaunchedProcessInfo {
             process_id: process_info_raw.dwProcessId,
             thread_id: process_info_raw.dwThreadId,
@@ -108,6 +111,8 @@ impl Debugger for WindowsDebugger {
 
     #[allow(unused_variables)] // For process_handle
     fn wait_for_event(&mut self) -> Result<DebugEvent, DebuggerError> {
+
+        debug!("Waiting for event");
         let mut debug_event_raw: DEBUG_EVENT = unsafe { std::mem::zeroed() };
         if unsafe { WaitForDebugEvent(&mut debug_event_raw, INFINITE) } == FALSE {
             let error = unsafe { GetLastError() };
@@ -115,6 +120,7 @@ impl Debugger for WindowsDebugger {
                 "WaitForDebugEvent failed: {error}"
             )));
         }
+        debug!("Event received {:?}", debug_event_raw.dwDebugEventCode);
 
         let current_pid = debug_event_raw.dwProcessId;
         let current_tid = debug_event_raw.dwThreadId;

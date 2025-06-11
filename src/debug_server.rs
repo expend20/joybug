@@ -618,10 +618,10 @@ pub fn create_router() -> Router {
         .with_state(state)
 }
 
-pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_server(port: u32) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = create_router();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.unwrap();
     info!("Debug server listening on 0.0.0.0:{}", port);
     axum::serve(listener, app).await.unwrap();
     Ok(())
-} 
+}
